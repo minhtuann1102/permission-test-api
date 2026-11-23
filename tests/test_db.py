@@ -1,4 +1,5 @@
 from sqlalchemy import func, select
+from sqlalchemy.pool import NullPool
 
 from permapp.db import (
     init_db,
@@ -36,3 +37,16 @@ def test_reset_clears_grants(engine):
         assert c.execute(select(func.count()).select_from(system_grants)).scalar() == 0
         assert c.execute(select(func.count()).select_from(miniapp_grants)).scalar() == 0
         assert c.execute(select(func.count()).select_from(users)).scalar() == 3
+
+
+def test_postgres_engine_is_pgbouncer_safe(monkeypatch):
+    import permapp.db as db
+    seen = {}
+
+    def spy(url, **kwargs):
+        seen.update(kwargs, url=url)
+
+    monkeypatch.setattr(db, "create_engine", spy)
+    db.make_engine("postgresql+psycopg://u:p@h/db?sslmode=require")
+    assert seen["poolclass"] is NullPool
+    assert seen["connect_args"] == {"prepare_threshold": None}  # PgBouncer transaction mode

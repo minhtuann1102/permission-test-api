@@ -81,7 +81,14 @@ def normalize_db_url(url):
 def make_engine(url):
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False})
-    return create_engine(url, poolclass=NullPool, pool_pre_ping=True)
+    # prepare_threshold=None: Neon's pooled URL goes through PgBouncer in
+    # transaction mode, where psycopg's auto-prepared statements can break.
+    return create_engine(
+        url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        connect_args={"prepare_threshold": None},
+    )
 
 
 @functools.lru_cache(maxsize=None)
