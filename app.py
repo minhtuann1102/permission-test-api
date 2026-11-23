@@ -1,5 +1,6 @@
 """Permission Test API — FastAPI entrypoint (Vercel zero-config: exposes `app`)."""
 import html
+import os
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, Query, Request
@@ -11,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from permapp import service
 from permapp.db import get_engine, init_db, reset_db
 from permapp.service import ServiceError
+from permapp.swagger import build_swagger
 
 app = FastAPI(title="Permission Test API", version="1.0.0")
 
@@ -92,6 +94,16 @@ class MemberIn(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/swagger.json")
+def swagger_json(request: Request):
+    host = (
+        os.environ.get("PUBLIC_HOST")
+        or request.headers.get("x-forwarded-host")
+        or request.headers.get("host", "")
+    )
+    return build_swagger(host)
 
 
 @app.get("/", response_class=HTMLResponse)
