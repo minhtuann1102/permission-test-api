@@ -57,7 +57,10 @@ def test_revoke_endpoints(client):
 def test_public_pages(client):
     assert client.get("/health").json() == {"status": "ok"}
     r = client.get("/")
-    assert r.status_code == 200 and "user1" in r.text
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html") and 'id="app"' in r.text
+    s = client.get("/status")
+    assert s.status_code == 200 and "user1" in s.text
+    assert client.get("/static/console.html").status_code == 200
     assert len(client.get("/admin/users", headers=ADMIN).json()["users"]) == 3
 
 

@@ -7,7 +7,7 @@ from fastapi.routing import APIRoute
 from app import app
 from permapp.swagger import build_swagger
 
-EXCLUDED = {"/", "/swagger.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+EXCLUDED = {"/", "/status", "/swagger.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 
 
 def test_valid_swagger_20():
@@ -59,3 +59,8 @@ def test_endpoint_uses_forwarded_host(client):
 def test_endpoint_prefers_public_host_and_strips_scheme(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_HOST", "https://perm.example.com/")
     assert client.get("/swagger.json").json()["host"] == "perm.example.com"
+
+
+def test_ui_routes_not_in_swagger():
+    spec = build_swagger("h")
+    assert "/" not in spec["paths"] and "/status" not in spec["paths"]

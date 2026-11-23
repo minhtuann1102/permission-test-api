@@ -1,11 +1,13 @@
 """Permission Test API — FastAPI entrypoint (Vercel zero-config: exposes `app`)."""
 import html
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -15,6 +17,8 @@ from permapp.service import ServiceError
 from permapp.swagger import build_swagger
 
 app = FastAPI(title="Permission Test API", version="1.0.0")
+
+STATIC_DIR = Path(__file__).parent / "permapp" / "static"
 
 _db_ready = False
 
@@ -111,7 +115,12 @@ def swagger_json(request: Request):
     return build_swagger(host)
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", include_in_schema=False)
+def console_page():
+    return FileResponse(STATIC_DIR / "console.html", media_type="text/html")
+
+
+@app.get("/status", response_class=HTMLResponse, include_in_schema=False)
 def status_page(engine=Depends(db_engine)):
     apps = service.list_miniapps(engine)
     people = service.list_users_with_grants(engine)
@@ -219,3 +228,6 @@ def admin_check(
 def admin_reset(_=Depends(require_admin), engine=Depends(db_engine)):
     reset_db(engine)
     return {"reset": True}
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
