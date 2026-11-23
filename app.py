@@ -144,8 +144,11 @@ def status_page(engine=Depends(db_engine)):
             else:
                 cell, cls = "—", "none"
             cells.append(f'<td class="{cls}">{cell}</td>')
+        org = " · ".join(html.escape(x) for x in (u["department"], u["title"]) if x)
+        badge = ' <span class="gone">Đã nghỉ việc</span>' if u["status"] == "RESIGNED" else ""
         rows.append(
-            f"<tr><th>{html.escape(u['username'])}<br><small>{html.escape(u['display_name'])} · {u['role']}</small></th>"
+            f"<tr><th>{html.escape(u['username'])}{badge}<br><small>{html.escape(u['display_name'])} · {u['role']}</small>"
+            + (f"<br><small>{org}</small>" if org else "") + "</th>"
             + "".join(cells) + "</tr>"
         )
     body = f"""<!doctype html>
@@ -158,6 +161,7 @@ th,td{{border:1px solid #d5d9e0;padding:.5rem .8rem;text-align:center}}
 th small{{color:#6b7280;font-weight:normal}}
 td.use{{background:#dcfce7}} td.see{{background:#fef9c3}} td.none{{color:#9ca3af}} td.all{{background:#e0e7ff}}
 code{{background:#eef;padding:0 .3em}}
+.gone{{font-size:.75rem;font-weight:600;color:#b42318;background:#fee4e2;border-radius:4px;padding:0 .35em}}
 </style></head><body>
 <h1>Permission Test API</h1>
 <p>Trạng thái quyền hiện tại. <b>chỉ thấy</b> = đã có quyền hệ thống (tầng 1);
@@ -238,6 +242,19 @@ def admin_check(
         return service.check_access(engine, username, miniapp_id)
     except ServiceError:
         return {"username": username, "miniapp_id": miniapp_id, "visible": False, "can_use": False}
+
+
+@app.get("/admin/eligibility")
+def admin_eligibility(
+    username: Optional[str] = Query(None),
+    miniapp_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    approver_email: Optional[str] = Query(None),
+    _=Depends(require_admin),
+    engine=Depends(db_engine),
+):
+    """Always 200: a 'not eligible' answer is data for the agent, not a tool failure."""
+    return service.check_eligibility(engine, username, miniapp_id, role, approver_email)
 
 
 @app.post("/admin/reset")

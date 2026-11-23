@@ -66,7 +66,7 @@ def test_public_pages(client):
     s = client.get("/status")
     assert s.status_code == 200 and "user1" in s.text
     assert client.get("/static/console.html").status_code == 200
-    assert len(client.get("/admin/users", headers=ADMIN).json()["users"]) == 3
+    assert len(client.get("/admin/users", headers=ADMIN).json()["users"]) == 4
 
 
 def test_unknown_route_is_json(client):
@@ -116,7 +116,8 @@ def test_find_user_by_email_needs_admin(client):
 
 def test_users_and_me_include_email(client):
     users = {u["username"]: u["email"] for u in client.get("/admin/users", headers=ADMIN).json()["users"]}
-    assert users == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local"}
+    assert users == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local",
+                     "user3": "user3@demo.local"}
     assert client.get("/me", headers=U1).json()["email"] == "user1@demo.local"
 
 
@@ -135,3 +136,75 @@ def test_cors_only_on_swagger(client):
     assert client.get("/swagger.json", headers=origin).headers.get("access-control-allow-origin") == "*"
     assert "access-control-allow-origin" not in client.get("/admin/users", headers={**ADMIN, **origin}).headers
     assert "access-control-allow-origin" not in client.get("/health", headers=origin).headers
+
+
+# ---------- eligibility ----------
+
+def _elig(client, **params):
+    r = client.get("/admin/eligibility", params=params, headers=ADMIN)
+    assert r.status_code == 200
+    return r.json()
+
+
+def test_check_eligibility_endpoint(client):
+    assert _elig(client, username="user1", miniapp_id="lms", role="instructor")["eligible"] is True
+    body = _elig(client, username="user2", miniapp_id="lms", role="instructor")
+    assert body == {
+        "username": "user2", "miniapp_id": "lms", "role": "instructor", "eligible": False,
+        "reasons": ["Vai trò instructor của LMS chỉ dành cho Phòng Đào tạo (L&D) hoặc chức danh chứa 'giảng viên'"],
+        "status": "ACTIVE", "department": "Phòng Kinh doanh", "title": "Nhân viên kinh doanh",
+        "manager_email": "truongphong.kinhdoanh@demo.local", "approver_checked": False, "approver_ok": False,
+    }
+    assert _elig(client, username="user2", miniapp_id="lms", role="learner")["eligible"] is True
+    assert _elig(client, username="user3", miniapp_id="leave")["eligible"] is False
+
+
+def test_check_eligibility_empty_strings_from_copilot(client):
+    """Copilot Studio sends "" for optional inputs it did not fill."""
+    body = _elig(client, username="user1", miniapp_id="leave", role="", approver_email="")
+    assert body["eligible"] is True and body["approver_checked"] is False
+
+
+def test_check_eligibility_approver(client):
+    ok = _elig(client, username="user1", miniapp_id="leave", approver_email="truongphong.daotao@demo.local")
+    assert (ok["approver_checked"], ok["approver_ok"]) == (True, True)
+    bad = _elig(client, username="user1", miniapp_id="leave", approver_email="ai.do@demo.local")
+    assert (bad["approver_checked"], bad["approver_ok"]) == (True, False)
+
+
+def test_check_eligibility_always_200_even_when_params_missing(client):
+    body = _elig(client)
+    assert body["eligible"] is False and body["reasons"]
+    assert _elig(client, username="ghost", miniapp_id="nope")["eligible"] is False
+
+
+def test_check_eligibility_needs_admin(client):
+    r = client.get("/admin/eligibility", params={"username": "user1", "miniapp_id": "leave"}, headers=U1)
+    assert r.status_code == 403 and r.json()["code"] == "ADMIN_REQUIRED"
+
+
+def test_add_member_not_eligible_is_403_and_writes_nothing(client):
+    r = client.post("/admin/miniapps/lms/members", json={"username": "user2", "role": "instructor"}, headers=ADMIN)
+    assert r.status_code == 403 and r.json()["code"] == "NOT_ELIGIBLE"
+    assert r.json()["detail"].startswith("Vai trò instructor của LMS chỉ dành cho")
+    user2 = client.get("/admin/users/by-email", params={"email": "user2@demo.local"}, headers=ADMIN).json()
+    assert user2["memberships"] == [] and user2["system_access"] == []
+
+
+def test_grant_system_access_resigned_is_403(client):
+    r = client.post("/admin/system-access", json={"username": "user3", "miniapp_id": "leave"}, headers=ADMIN)
+    assert r.status_code == 403 and r.json()["code"] == "NOT_ELIGIBLE"
+    assert r.json()["detail"].startswith("Nhân viên đã nghỉ việc")
+    assert client.get("/admin/check", params={"username": "user3", "miniapp_id": "leave"}, headers=ADMIN).json()["visible"] is False
+
+
+def test_user_fields_include_org_data(client):
+    me = client.get("/me", headers=U1).json()
+    assert (me["department"], me["title"], me["manager_email"], me["status"]) == (
+        "Phòng Đào tạo (L&D)", "Chuyên viên đào tạo", "truongphong.daotao@demo.local", "ACTIVE")
+    user3 = client.get("/admin/users/by-email", params={"email": "user3@demo.local"}, headers=ADMIN).json()
+    assert user3["status"] == "RESIGNED"
+    admin = next(u for u in client.get("/admin/users", headers=ADMIN).json()["users"] if u["username"] == "admin")
+    assert admin["manager_email"] == ""  # never null
+    assert client.get("/me", headers={"X-API-Key": "user3-key-123"}).json()["username"] == "user3"
+    assert "Đã nghỉ việc" in client.get("/status").text and "Phòng Kinh doanh" in client.get("/status").text

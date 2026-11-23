@@ -64,3 +64,20 @@ def test_endpoint_prefers_public_host_and_strips_scheme(client, monkeypatch):
 def test_ui_routes_not_in_swagger():
     spec = build_swagger("h")
     assert "/" not in spec["paths"] and "/status" not in spec["paths"]
+
+
+
+def test_check_eligibility_documented_and_grants_mention_both_403_codes():
+    spec = build_swagger("h")
+    op = spec["paths"]["/admin/eligibility"]["get"]
+    assert op["operationId"] == "CheckEligibility"
+    required = {p["name"]: p["required"] for p in op["parameters"]}
+    assert required == {"X-API-Key": True, "username": True, "miniapp_id": True, "role": False, "approver_email": False}
+    for path in ("/admin/system-access", "/admin/miniapps/{miniapp_id}/members"):
+        grant = spec["paths"][path]["post"]
+        desc = grant["responses"]["403"]["description"]
+        assert "ADMIN_REQUIRED" in desc and "NOT_ELIGIBLE" in desc
+        assert "CheckEligibility before granting" in grant["description"]
+    assert "NOT_ELIGIBLE" in spec["definitions"]["Error"]["properties"]["code"]["description"]
+    for d in ("User", "UserWithGrants"):
+        assert {"department", "title", "manager_email", "status"} <= set(spec["definitions"][d]["properties"])

@@ -22,10 +22,10 @@ def test_normalize_db_url():
 def test_init_db_seeds_once(engine):
     init_db(engine)  # second call
     with engine.connect() as c:
-        assert c.execute(select(func.count()).select_from(users)).scalar() == 3
+        assert c.execute(select(func.count()).select_from(users)).scalar() == 4
         assert c.execute(select(func.count()).select_from(miniapps)).scalar() == 4
         roles = dict(c.execute(select(users.c.username, users.c.role)).all())
-    assert roles == {"admin": "admin", "user1": "user", "user2": "user"}
+    assert roles == {"admin": "admin", "user1": "user", "user2": "user", "user3": "user"}
 
 
 def test_reset_clears_grants(engine):
@@ -36,7 +36,7 @@ def test_reset_clears_grants(engine):
     with engine.connect() as c:
         assert c.execute(select(func.count()).select_from(system_grants)).scalar() == 0
         assert c.execute(select(func.count()).select_from(miniapp_grants)).scalar() == 0
-        assert c.execute(select(func.count()).select_from(users)).scalar() == 3
+        assert c.execute(select(func.count()).select_from(users)).scalar() == 4
 
 
 def test_postgres_engine_is_pgbouncer_safe(monkeypatch):
@@ -55,7 +55,8 @@ def test_postgres_engine_is_pgbouncer_safe(monkeypatch):
 def test_seed_users_have_emails(engine):
     with engine.connect() as c:
         emails = dict(c.execute(select(users.c.username, users.c.email)).all())
-    assert emails == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local"}
+    assert emails == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local",
+                      "user3": "user3@demo.local"}
 
 
 def test_init_db_adds_email_column_to_an_old_users_table(tmp_path):
@@ -108,3 +109,42 @@ def test_init_db_upgrades_old_miniapp_tables_in_place(tmp_path):
     eng.dispose()
     assert apps["leave"] == (False, "") and apps["lms"] == (True, "learner,instructor")
     assert role == ""
+
+
+
+def test_init_db_upgrades_old_users_table_with_org_columns(tmp_path):
+    from sqlalchemy import text
+
+    from permapp.db import make_engine, role_rules
+
+    eng = make_engine(f"sqlite:///{tmp_path}/old3.db")
+    with eng.begin() as c:  # users table with emails but no org data yet
+        c.execute(text("CREATE TABLE users (username VARCHAR(64) PRIMARY KEY, api_key VARCHAR(128) NOT NULL UNIQUE, "
+                       "role VARCHAR(16) NOT NULL, display_name VARCHAR(128) NOT NULL, email VARCHAR(254))"))
+        c.execute(text("INSERT INTO users VALUES ('user2', 'user2-key-123', 'user', 'Người dùng 2', 'user2@demo.local')"))
+    init_db(eng)
+    init_db(eng)  # idempotent: no duplicate rules, no errors
+    with eng.connect() as c:
+        org = {r.username: (r.department, r.manager_email, r.status) for r in c.execute(select(users)).all()}
+        n_rules = c.execute(select(func.count()).select_from(role_rules)).scalar()
+    eng.dispose()
+    assert org["user2"] == ("Phòng Kinh doanh", "truongphong.kinhdoanh@demo.local", "ACTIVE")
+    assert org["user3"][2] == "RESIGNED" and org["admin"][1] == ""
+    assert n_rules == 2
+
+
+def test_reset_restores_org_data_and_rules(engine):
+    from sqlalchemy import update
+
+    from permapp.db import role_rules
+
+    with engine.begin() as c:
+        c.execute(update(users).where(users.c.username == "user3").values(status="ACTIVE", department="X"))
+        c.execute(role_rules.delete())
+        c.execute(role_rules.insert().values(miniapp_id="leave", role="", department="Y", title_keyword=""))
+    reset_db(engine)
+    with engine.connect() as c:
+        row = c.execute(select(users.c.status, users.c.department).where(users.c.username == "user3")).first()
+        rules = sorted((r.miniapp_id, r.role, r.department, r.title_keyword) for r in c.execute(select(role_rules)).all())
+    assert tuple(row) == ("RESIGNED", "Phòng Kinh doanh")
+    assert rules == [("lms", "instructor", "", "giảng viên"), ("lms", "instructor", "Phòng Đào tạo (L&D)", "")]

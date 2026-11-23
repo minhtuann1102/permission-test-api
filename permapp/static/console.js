@@ -4,7 +4,7 @@
 
   var L = window.ConsoleLogic;
   var POLL_MS = 3000;
-  var USER_KEYS = { user1: "user1-key-123", user2: "user2-key-123" };
+  var USER_KEYS = { user1: "user1-key-123", user2: "user2-key-123", user3: "user3-key-123" };
   var K_ROLE = "permconsole.role";
   var K_ADMIN = "permconsole.adminKey";
 
@@ -205,7 +205,8 @@
     var head = h("div", { class: "head" }, [
       h("div", null, [
         h("h1", { text: "Miniapp của bạn" }),
-        h("p", { text: "Bạn đang xem với tài khoản " + me.display_name + " (" + (me.email || me.username) + "). Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
+        h("p", { text: "Bạn đang xem với tài khoản " + me.display_name + " (" + (me.email || me.username) + ")" + (L.orgLine(me) ? ", " + L.orgLine(me) : "") + ". Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
+        L.isResigned(me) ? h("p", null, [h("span", { class: "badge badge--gone", text: "Đã nghỉ việc" }), " Tài khoản này không được cấp quyền mới."]) : null,
       ]),
     ]);
     if (!apps.length) {
@@ -444,7 +445,14 @@
           ]),
         ]);
       });
-      return h("tr", null, [h("th", { scope: "row", class: "who" }, [h("b", { text: u.display_name }), h("span", { text: u.username }), u.email ? h("span", { class: "who__email", text: u.email }) : null])].concat(cells));
+      var org = L.orgLine(u);
+      return h("tr", null, [h("th", { scope: "row", class: "who" }, [
+        h("b", { text: u.display_name }),
+        h("span", { text: u.username }),
+        u.email ? h("span", { class: "who__email", text: u.email }) : null,
+        org ? h("span", { class: "who__org", text: org }) : null,
+        L.isResigned(u) ? h("span", { class: "badge badge--gone", text: "Đã nghỉ việc" }) : null,
+      ])].concat(cells));
     });
 
     mount([
@@ -599,7 +607,7 @@
     var submit = h("button", { type: "submit", class: "key key--primary", text: "Lưu và tiếp tục" });
     var form = h("form", { class: "panel", novalidate: true }, [
       h("h1", { text: "Nhập admin key" }),
-      h("p", { text: "Key được lưu trong trình duyệt này để lần sau không phải nhập lại. Key của user1 và user2 đã có sẵn." }),
+      h("p", { text: "Key được lưu trong trình duyệt này để lần sau không phải nhập lại. Key của user1, user2 và user3 đã có sẵn." }),
       h("div", { class: "field" }, [h("label", { for: "admin-key", text: "Admin key" }), input, help]),
       h("div", { class: "head__actions" }, [
         submit,

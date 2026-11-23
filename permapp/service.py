@@ -1,8 +1,10 @@
-"""Two-tier permission rules (system access -> miniapp membership). No HTTP here."""
+"""Two-tier permission rules (system access -> miniapp membership) and eligibility. No HTTP here."""
+import unicodedata
+
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from permapp.db import miniapp_grants, miniapps, system_grants, users
+from permapp.db import miniapp_grants, miniapps, role_rules, system_grants, users
 
 
 class ServiceError(Exception):
@@ -15,7 +17,18 @@ class ServiceError(Exception):
 
 # ---------- lookups ----------
 
-_USER_COLS = (users.c.username, users.c.role, users.c.display_name, users.c.email)
+_USER_COLS = (
+    users.c.username, users.c.role, users.c.display_name, users.c.email,
+    users.c.department, users.c.title, users.c.manager_email, users.c.status,
+)
+ACTIVE, RESIGNED = "ACTIVE", "RESIGNED"
+
+
+def _user_dict(row):
+    """Public shape of a user: blank text is "" (never null), a missing status counts as ACTIVE."""
+    d = {k: (v or "") for k, v in dict(row).items()}
+    d["status"] = (d["status"] or ACTIVE).upper()
+    return d
 _APP_COLS = (miniapps.c.id, miniapps.c.name, miniapps.c.description, miniapps.c.always_visible, miniapps.c.roles)
 
 
@@ -23,7 +36,7 @@ def _user_row(conn, username):
     row = conn.execute(select(*_USER_COLS).where(users.c.username == username)).mappings().first()
     if row is None:
         raise ServiceError(404, "USER_NOT_FOUND", f"Không tìm thấy người dùng '{username}'")
-    return dict(row)
+    return _user_dict(row)
 
 
 def _app_dict(row):
@@ -88,7 +101,7 @@ def get_user_by_key(engine, api_key):
         return None
     with engine.connect() as c:
         row = c.execute(select(*_USER_COLS).where(users.c.api_key == api_key)).mappings().first()
-    return dict(row) if row else None
+    return _user_dict(row) if row else None
 
 
 def list_miniapps(engine):
@@ -127,6 +140,79 @@ def check_access(engine, username, miniapp_id):
     return {"username": username, "miniapp_id": miniapp_id, "visible": visible, "can_use": can_use, "role": role}
 
 
+# ---------- eligibility ----------
+# The API decides who may be granted what. Callers (the agent) only read and show the result.
+
+def _fold(text):
+    """Case- and accent-form-insensitive comparison key (Vietnamese titles, emails)."""
+    return unicodedata.normalize("NFC", (text or "").strip()).casefold()
+
+
+def _eligibility(conn, user, app, role):
+    """(eligible, reasons) for granting `user` the (already validated) `role` in `app`.
+    Reasons are Vietnamese sentences: why not, or on what basis."""
+    subject = f"Vai trò {role} của {app['name']}" if role else f"Miniapp {app['name']}"
+    rules = conn.execute(
+        select(role_rules.c.department, role_rules.c.title_keyword)
+        .where(role_rules.c.miniapp_id == app["id"], role_rules.c.role == role)
+        .order_by(role_rules.c.id)
+    ).all()
+    failures, grounds = [], []
+    if user["status"] == RESIGNED:
+        failures.append("Nhân viên đã nghỉ việc (RESIGNED), không được cấp quyền mới")
+    if rules:
+        for department, keyword in rules:
+            if department and _fold(user["department"]) == _fold(department):
+                grounds.append(f"Thuộc {department}")
+            if keyword and _fold(keyword) in _fold(user["title"]):
+                grounds.append(f"Chức danh '{user['title']}' chứa '{keyword}'")
+        if not grounds:
+            allowed = [d for d, _ in rules if d] + [f"chức danh chứa '{k}'" for _, k in rules if k]
+            failures.append(f"{subject} chỉ dành cho {' hoặc '.join(allowed)}")
+    else:
+        grounds.append(f"{subject} không giới hạn đơn vị hay chức danh")
+    if failures:
+        return False, failures
+    return True, grounds + ["Nhân viên đang làm việc"]
+
+
+def _require_eligible(conn, user, app, role):
+    eligible, reasons = _eligibility(conn, user, app, role)
+    if not eligible:
+        raise ServiceError(403, "NOT_ELIGIBLE", reasons[0])
+
+
+def check_eligibility(engine, username, miniapp_id, role="", approver_email=""):
+    """Always returns a result (never raises for unknown ids): the caller shows `reasons` as is."""
+    username = (username or "").strip()
+    miniapp_id = (miniapp_id or "").strip()
+    approver = (approver_email or "").strip()
+    out = {
+        "username": username, "miniapp_id": miniapp_id, "role": (role or "").strip().lower(),
+        "eligible": False, "reasons": [],
+        "status": "", "department": "", "title": "", "manager_email": "",
+        "approver_checked": bool(approver), "approver_ok": False,
+    }
+    with engine.connect() as c:
+        try:
+            user = _user_row(c, username)
+        except ServiceError as e:
+            user = None
+            out["reasons"].append(e.detail)
+        if user:
+            out.update({k: user[k] for k in ("status", "department", "title", "manager_email")})
+            out["approver_ok"] = bool(approver) and bool(user["manager_email"]) and                 _fold(approver) == _fold(user["manager_email"])
+        try:
+            app = _miniapp_row(c, miniapp_id)
+            out["role"] = resolve_role(app, role)
+        except ServiceError as e:
+            app = None
+            out["reasons"].append(e.detail)
+        if user and app:
+            out["eligible"], out["reasons"] = _eligibility(c, user, app, out["role"])
+    return out
+
+
 # ---------- grants ----------
 # IntegrityError is caught outside the transaction block so a Postgres aborted
 # transaction is fully rolled back first.
@@ -135,7 +221,8 @@ def grant_system_access(engine, username, miniapp_id):
     try:
         with engine.begin() as c:
             app = _miniapp_row(c, miniapp_id)
-            _user_row(c, username)
+            user = _user_row(c, username)
+            _require_eligible(c, user, app, "")
             if app["always_visible"] or _has(c, system_grants, username, miniapp_id):
                 already = True  # always-visible miniapps need no system access row
             else:
@@ -151,8 +238,9 @@ def grant_membership(engine, miniapp_id, username, role=""):
     try:
         with engine.begin() as c:
             app = _miniapp_row(c, miniapp_id)
-            _user_row(c, username)
+            user = _user_row(c, username)
             role = resolve_role(app, role)
+            _require_eligible(c, user, app, role)  # also on a role change, before any write
             if not app["always_visible"] and not _has(c, system_grants, username, miniapp_id):
                 raise ServiceError(
                     409,
@@ -219,7 +307,7 @@ def use_miniapp(engine, username, miniapp_id):
 
 def list_users_with_grants(engine):
     with engine.connect() as c:
-        rows = c.execute(select(*_USER_COLS).order_by(users.c.username)).mappings().all()
+        rows = [_user_dict(r) for r in c.execute(select(*_USER_COLS).order_by(users.c.username)).mappings().all()]
         sys_rows = c.execute(select(system_grants.c.username, system_grants.c.miniapp_id)).all()
         mem_rows = c.execute(
             select(miniapp_grants.c.username, miniapp_grants.c.miniapp_id, miniapp_grants.c.role)

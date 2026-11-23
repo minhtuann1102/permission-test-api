@@ -149,3 +149,27 @@ test("adminSnapshot changes when only the LMS role changes", () => {
   const after = L.adminSnapshot([{ username: "u", role: "user", memberships: ["lms"], member_roles: [{ miniapp_id: "lms", role: "instructor" }] }], apps);
   assert.deepEqual(L.diffSnapshots(before, after), ["u|lms"]);
 });
+
+test("errorText: NOT_ELIGIBLE shows the server reason", () => {
+  assert.equal(
+    L.errorText({ code: "NOT_ELIGIBLE", detail: "Nhân viên đã nghỉ việc (RESIGNED), không được cấp quyền mới" }, { user: "Người dùng 3", app: "Nghỉ phép" }),
+    "Không đủ điều kiện: Nhân viên đã nghỉ việc (RESIGNED), không được cấp quyền mới.",
+  );
+});
+
+test("orgLine joins department and title, skipping blanks", () => {
+  assert.equal(L.orgLine({ department: "Phòng Kinh doanh", title: "Nhân viên kinh doanh" }), "Phòng Kinh doanh · Nhân viên kinh doanh");
+  assert.equal(L.orgLine({ department: "", title: "Quản trị hệ thống" }), "Quản trị hệ thống");
+  assert.equal(L.orgLine({}), "");
+});
+
+test("isResigned reads status case-insensitively", () => {
+  assert.equal(L.isResigned({ status: "RESIGNED" }), true);
+  assert.equal(L.isResigned({ status: "resigned" }), true);
+  assert.equal(L.isResigned({ status: "ACTIVE" }), false);
+  assert.equal(L.isResigned({}), false);
+});
+
+test("pickRole accepts user3", () => {
+  assert.equal(L.pickRole("?as=user3", null), "user3");
+});

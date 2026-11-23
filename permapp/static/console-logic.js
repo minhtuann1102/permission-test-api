@@ -69,7 +69,7 @@
     return seq === latestLoadSeq && seq > lastMutationStartSeq && inFlight === 0;
   }
 
-  var ROLES = ["admin", "user1", "user2"];
+  var ROLES = ["admin", "user1", "user2", "user3"];
 
   // ?as=<role> in the URL wins, then the remembered role, then the admin view.
   function pickRole(search, stored) {
@@ -85,7 +85,19 @@
     if (data && data.code === "SYSTEM_ACCESS_REQUIRED" && ctx && ctx.user && ctx.app) {
       return ctx.user + " chưa có quyền hệ thống với " + ctx.app + ". Bật Quyền hệ thống trước, rồi mới thêm làm thành viên.";
     }
+    if (data && data.code === "NOT_ELIGIBLE") {
+      return "Không đủ điều kiện: " + (data.detail || "người dùng không được cấp quyền này") + ".";
+    }
     return (data && data.detail) || "Có lỗi xảy ra";
+  }
+
+  // "Phòng Kinh doanh · Nhân viên kinh doanh"; blank parts are skipped.
+  function orgLine(user) {
+    return [user.department, user.title].filter(function (x) { return x; }).join(" · ");
+  }
+
+  function isResigned(user) {
+    return String(user.status || "").toUpperCase() === "RESIGNED";
   }
 
   function safeStore(storage) {
@@ -130,6 +142,8 @@
     shouldApplyLoad: shouldApplyLoad,
     pickRole: pickRole,
     errorText: errorText,
+    orgLine: orgLine,
+    isResigned: isResigned,
     safeStore: safeStore,
   };
   root.ConsoleLogic = api;

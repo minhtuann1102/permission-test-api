@@ -44,11 +44,22 @@ Danh tính lần này **giả lập bằng email**, chưa dùng tài khoản Mic
 đoán ai là ai: email trong ticket được API đổi thành tài khoản qua `FindUserByEmail`. Email không
 có trong hệ thống thì API trả `404`, và agent dừng lại.
 
-| Email | username | Tên hiển thị |
-|---|---|---|
-| `user1@demo.local` | `user1` | Người dùng 1 |
-| `user2@demo.local` | `user2` | Người dùng 2 |
-| `admin@demo.local` | `admin` | Quản trị viên |
+| Email | username | Tên hiển thị | Đơn vị | Trạng thái |
+|---|---|---|---|---|
+| `user1@demo.local` | `user1` | Người dùng 1 | Phòng Đào tạo (L&D) | ACTIVE |
+| `user2@demo.local` | `user2` | Người dùng 2 | Phòng Kinh doanh | ACTIVE |
+| `user3@demo.local` | `user3` | Người dùng 3 | Phòng Kinh doanh | RESIGNED (đã nghỉ việc) |
+| `admin@demo.local` | `admin` | Quản trị viên | Phòng CNTT | ACTIVE |
+
+### Điều kiện cấp quyền (API kiểm tra, agent chỉ đọc)
+
+- Người `RESIGNED` không được cấp gì. Thu hồi luôn được phép.
+- `lms` / `instructor` (Giảng viên) chỉ dành cho Phòng Đào tạo (L&D) hoặc chức danh chứa "giảng viên".
+  Các miniapp / vai trò khác không giới hạn.
+- `CheckEligibility` trả `eligible`, `reasons` (câu tiếng Việt), và khi có `approver_email`:
+  `approver_ok` = người duyệt có đúng là quản lý trực tiếp (`manager_email`) không.
+- `GrantSystemAccess` / `AddMiniappMember` với người không đủ điều kiện trả `403 NOT_ELIGIBLE`
+  (lớp chặn thứ hai nếu agent bỏ qua `CheckEligibility`).
 
 | Miniapp | `miniapp_id` |
 |---|---|
@@ -93,8 +104,8 @@ người đang chat thay vì từ ticket); các bước còn lại giữ nguyên
    curl -o swagger.json https://permission-test-api-jvd4.vercel.app/swagger.json
    ```
 
-   Spec có 13 thao tác. Nếu trước đây bạn đã import một bản cũ (12 thao tác, chưa có
-   `FindUserByEmail`), hãy import lại.
+   Spec có 14 thao tác. Nếu trước đây bạn đã import một bản cũ (chưa có `CheckEligibility`),
+   hãy import lại.
 
 ---
 
@@ -127,6 +138,7 @@ người đang chat thay vì từ ticket); các bước còn lại giữ nguyên
    | `FindUserByEmail` | `GET /admin/users/by-email?email=` | Đổi email người yêu cầu thành username, kèm quyền hiện có | ✔ |
    | `ListMiniapps` | `GET /admin/miniapps` | Đổi tên miniapp thành `miniapp_id` | ✔ |
    | `CheckAccess` | `GET /admin/check` | Xem quyền trước và sau khi cấp (luôn trả 200) | ✔ |
+   | `CheckEligibility` | `GET /admin/eligibility?username=&miniapp_id=&role=&approver_email=` | Kiểm tra điều kiện và người duyệt trước khi cấp (luôn trả 200) | ✔ |
    | `GrantSystemAccess` | `POST /admin/system-access` | Tầng 1 | ✔ |
    | `AddMiniappMember` | `POST /admin/miniapps/{miniapp_id}/members` | Tầng 2 | ✔ |
    | `ListUsers` | `GET /admin/users` | Xem tổng quan mọi người dùng | tuỳ chọn |
@@ -312,6 +324,8 @@ curl -s -X POST $B/admin/reset -H "$A"
 | `404 MINIAPP_NOT_FOUND` | Agent điền tên ("Nghỉ phép") thay vì id (`leave`) | Kiểm tra bảng tên ↔ id trong Instructions; để agent gọi `ListMiniapps` |
 | `409 SYSTEM_ACCESS_REQUIRED` | Gọi tầng 2 trước tầng 1 | Instructions bước 6 đã có bước tự sửa |
 | `422 VALIDATION_ERROR` | Thiếu `email`, `username` hoặc `miniapp_id` | Xem tham số trong Activity map |
+| `403 NOT_ELIGIBLE` | Người dùng không đủ điều kiện (đã nghỉ việc, hoặc vai trò giới hạn theo đơn vị) | Đúng thiết kế: agent trả `TỪ CHỐI` kèm `detail`. Agent nên gọi `CheckEligibility` trước |
+| `422 INVALID_ROLE` | Vai trò không có trong miniapp (ví dụ `teacher` cho `lms`) | `lms` chỉ nhận `learner` / `instructor`; miniapp khác bỏ trống `role` |
 | Không thấy `FindUserByEmail` trong danh sách tool | Đang dùng spec cũ | Tải lại `swagger.json`, import lại tool |
 | Tool trả về trang HTML | Vercel Deployment Protection đang bật | Tắt cho Production; dùng domain production, không dùng URL của từng deployment |
 | Agent không gọi tool, chỉ trả lời chung chung | Generative orchestration đang tắt, hoặc mô tả tool chưa rõ | Mục 3 bước 3 |
@@ -321,22 +335,23 @@ Mọi lỗi của API đều là JSON `{"detail": "...", "code": "..."}`. Agent 
 
 ---
 
-## 10. Tham chiếu API (13 thao tác)
+## 10. Tham chiếu API (14 thao tác)
 
 | operationId | Method + path | Key | Ghi chú |
 |---|---|---|---|
 | `HealthCheck` | `GET /health` | không | `{"status":"ok"}` |
-| `GetMe` | `GET /me` | bất kỳ | tài khoản của key (có `email`) |
+| `GetMe` | `GET /me` | bất kỳ | tài khoản của key (có `email`, `department`, `title`, `manager_email`, `status`) |
 | `ListMyMiniapps` | `GET /me/miniapps` | user | miniapp nhìn thấy, kèm `can_use` |
 | `UseMiniapp` | `POST /miniapps/{miniapp_id}/use` | user | 200 nếu đủ 2 tầng; 403 `NOT_VISIBLE` / `NOT_MEMBER` |
-| `ListUsers` | `GET /admin/users` | admin | mọi người dùng (có `email`, `system_access`, `memberships`) |
+| `ListUsers` | `GET /admin/users` | admin | mọi người dùng (có `email`, đơn vị, chức danh, `manager_email`, `status`, `system_access`, `memberships`, `member_roles`) |
 | `FindUserByEmail` | `GET /admin/users/by-email?email=` | admin | một người dùng như trên; 404 `USER_NOT_FOUND`; 422 khi trống |
 | `ListMiniapps` | `GET /admin/miniapps` | admin | id, tên, mô tả |
-| `GrantSystemAccess` | `POST /admin/system-access` body `{username, miniapp_id}` | admin | tầng 1 |
+| `GrantSystemAccess` | `POST /admin/system-access` body `{username, miniapp_id}` | admin | tầng 1; 403 `NOT_ELIGIBLE` |
 | `RevokeSystemAccess` | `DELETE /admin/system-access/{username}/{miniapp_id}` | admin | gỡ cả 2 tầng |
-| `AddMiniappMember` | `POST /admin/miniapps/{miniapp_id}/members` body `{username, role}` | admin | tầng 2; 409 nếu thiếu tầng 1 (trừ `lms`); `role` cho `lms`: `learner` / `instructor`; 422 `INVALID_ROLE` |
+| `AddMiniappMember` | `POST /admin/miniapps/{miniapp_id}/members` body `{username, role}` | admin | tầng 2; 409 nếu thiếu tầng 1 (trừ `lms`); `role` cho `lms`: `learner` / `instructor`; 422 `INVALID_ROLE`; 403 `NOT_ELIGIBLE` |
 | `RemoveMiniappMember` | `DELETE /admin/miniapps/{miniapp_id}/members/{username}` | admin | gỡ tầng 2 |
 | `CheckAccess` | `GET /admin/check?username=&miniapp_id=` | admin | luôn 200: `visible`, `can_use`, `role` |
+| `CheckEligibility` | `GET /admin/eligibility?username=&miniapp_id=&role=&approver_email=` | admin | luôn 200: `eligible`, `reasons`, `status`, `department`, `title`, `manager_email`, `approver_checked`, `approver_ok` |
 | `ResetAll` | `POST /admin/reset` | admin | xoá mọi quyền, khôi phục dữ liệu mẫu |
 
 ---

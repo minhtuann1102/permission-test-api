@@ -26,8 +26,8 @@ DEFINITIONS = {
             "detail": _str("Human-readable error message (Vietnamese)."),
             "code": _str(
                 "Machine-readable error code: UNAUTHORIZED, ADMIN_REQUIRED, NOT_VISIBLE, NOT_MEMBER, "
-                "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, INVALID_ROLE, VALIDATION_ERROR, "
-                "NOT_FOUND."
+                "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, NOT_ELIGIBLE, INVALID_ROLE, "
+                "VALIDATION_ERROR, NOT_FOUND."
             ),
         },
     },
@@ -39,6 +39,10 @@ DEFINITIONS = {
             "role": _str("'admin' or 'user'."),
             "display_name": _str("Display name."),
             "email": _str("Email used as the (mock) identity, e.g. 'user1@demo.local'."),
+            "department": _str("Department (đơn vị), e.g. 'Phòng Đào tạo (L&D)'. Empty if unknown."),
+            "title": _str("Job title (chức danh), e.g. 'Chuyên viên đào tạo'. Empty if unknown."),
+            "manager_email": _str("Email of the direct manager. Empty if none."),
+            "status": _str("Employment status: 'ACTIVE' or 'RESIGNED'. RESIGNED users cannot be granted anything."),
         },
     },
     "Miniapp": {
@@ -80,6 +84,10 @@ DEFINITIONS = {
             "role": _str("'admin' or 'user'."),
             "display_name": _str("Display name."),
             "email": _str("Email used as the (mock) identity, e.g. 'user1@demo.local'."),
+            "department": _str("Department (đơn vị), e.g. 'Phòng Đào tạo (L&D)'. Empty if unknown."),
+            "title": _str("Job title (chức danh), e.g. 'Chuyên viên đào tạo'. Empty if unknown."),
+            "manager_email": _str("Email of the direct manager. Empty if none."),
+            "status": _str("Employment status: 'ACTIVE' or 'RESIGNED'. RESIGNED users cannot be granted anything."),
             "system_access": {"type": "array", "items": {"type": "string"},
                               "description": "Miniapp ids this user has system access to (tier 1)."},
             "memberships": {"type": "array", "items": {"type": "string"},
@@ -149,6 +157,24 @@ DEFINITIONS = {
             "message": _str("Confirmation message."),
         },
     },
+    "Eligibility": {
+        "type": "object",
+        "properties": {
+            "username": _str("Username checked."),
+            "miniapp_id": _str("Miniapp id checked."),
+            "role": _str("Role checked. For lms a blank role is checked as 'learner'. Empty for miniapps without roles."),
+            "eligible": _bool("True if the user may be granted this miniapp/role. False: do not grant."),
+            "reasons": {"type": "array", "items": {"type": "string"},
+                        "description": "Vietnamese sentences: why not eligible, or the basis for eligibility. "
+                                       "Show them as they are."},
+            "status": _str("Employment status: 'ACTIVE' or 'RESIGNED'. Empty if the user is unknown."),
+            "department": _str("The user's department. Empty if unknown."),
+            "title": _str("The user's job title. Empty if unknown."),
+            "manager_email": _str("Email of the user's direct manager. Empty if none."),
+            "approver_checked": _bool("True if approver_email was given and compared."),
+            "approver_ok": _bool("True if approver_email is the user's direct manager (manager_email)."),
+        },
+    },
     "Reset": {"type": "object", "properties": {"reset": _bool("Always true.")}},
 }
 
@@ -173,8 +199,8 @@ def _path(name, desc):
     return {"name": name, "in": "path", "required": True, "type": "string", "description": desc}
 
 
-def _query(name, desc):
-    return {"name": name, "in": "query", "required": True, "type": "string", "description": desc}
+def _query(name, desc, required=True):
+    return {"name": name, "in": "query", "required": required, "type": "string", "description": desc}
 
 
 def _body(schema_name, desc):
@@ -207,6 +233,12 @@ E404 = {"404": _err("Unknown username (USER_NOT_FOUND) or miniapp id (MINIAPP_NO
 E422 = {"422": _err("Request body is missing a field (VALIDATION_ERROR).")}
 
 ADMIN_ERRORS = {**E401, **E403_ADMIN}
+# One 403 entry per operation (responses are keyed by status code), so both codes share it.
+E403_GRANT = {"403": _err(
+    "The key is not the admin key (ADMIN_REQUIRED), or the user is not eligible (NOT_ELIGIBLE: detail "
+    "gives the reason, e.g. the user resigned or the role is limited to a department). Nothing was changed."
+)}
+GRANT_ERRORS = {**E401, **E403_GRANT}
 
 
 def _paths():
@@ -285,9 +317,10 @@ def _paths():
                 "Admin only (admin key). STEP 1 of 2: grants a user system-level access so the miniapp "
                 "becomes VISIBLE to them. The user still cannot use it until step 2 (AddMiniappMember). "
                 "Always-visible miniapps (lms) need no system access: the call returns already_granted=true. "
+                "Call CheckEligibility before granting: a user who is not eligible gets 403 NOT_ELIGIBLE. "
                 "Safe to call twice (already_granted=true).",
                 [ADMIN_KEY_PARAM, _body("SystemAccessIn", "Who gets access to which miniapp.")],
-                "Grant", "System access granted (or already existed).", {**ADMIN_ERRORS, **E404, **E422},
+                "Grant", "System access granted (or already existed).", {**GRANT_ERRORS, **E404, **E422},
             )
         },
         "/admin/system-access/{username}/{miniapp_id}": {
@@ -306,10 +339,11 @@ def _paths():
                 "can USE it. Requires step 1 (GrantSystemAccess) first, otherwise returns 409 "
                 "SYSTEM_ACCESS_REQUIRED, except for always-visible miniapps (lms). For lms pass role "
                 "'learner' (Học viên) or 'instructor' (Giảng viên); calling again with another role changes "
-                "the role. Safe to call twice (already_granted=true).",
+                "the role. Call CheckEligibility before granting: a user who is not eligible for this role "
+                "gets 403 NOT_ELIGIBLE (also when changing the role). Safe to call twice (already_granted=true).",
                 [ADMIN_KEY_PARAM, MINIAPP_PATH, _body("MemberIn", "The user to add, and the role for lms.")],
                 "Grant", "Member added, role changed, or already a member with this role.",
-                {**ADMIN_ERRORS, **E404,
+                {**GRANT_ERRORS, **E404,
                  "422": _err("A body field is missing (VALIDATION_ERROR) or the role is not valid for this "
                              "miniapp (INVALID_ROLE)."),
                  "409": _err("The user has no system access to this miniapp yet (SYSTEM_ACCESS_REQUIRED).")},
@@ -335,6 +369,27 @@ def _paths():
                  _query("username", "Username to check, e.g. 'user1'."),
                  _query("miniapp_id", "Miniapp id to check, e.g. 'leave'.")],
                 "Check", "Access status.", ADMIN_ERRORS,
+            )
+        },
+        "/admin/eligibility": {
+            "get": _op(
+                "CheckEligibility", "Check if a user may be granted a miniapp or role",
+                "Admin only (admin key). Call this BEFORE GrantSystemAccess or AddMiniappMember. Always "
+                "returns 200. eligible=false means do not grant; reasons says why, in Vietnamese, and must be "
+                "shown as is. Rules: a RESIGNED user is never eligible; some roles are limited, e.g. lms "
+                "instructor is only for the L&D department or a job title containing 'giảng viên'. Pass "
+                "approver_email (the approver named in the ticket) to check that the approver is the user's "
+                "direct manager: approver_checked=true and approver_ok=false means the approver is not the "
+                "direct manager. Revoking never needs this check.",
+                [ADMIN_KEY_PARAM,
+                 _query("username", "Username to check, e.g. 'user1'."),
+                 _query("miniapp_id", "Miniapp id to grant, e.g. 'leave' or 'lms'."),
+                 _query("role", "Role to grant, for lms only: 'learner' or 'instructor'. Leave empty otherwise.",
+                        required=False),
+                 _query("approver_email", "Email of the approver in the ticket. Leave empty if the ticket has none.",
+                        required=False)],
+                "Eligibility", "Eligibility result (also for unknown users or miniapps: eligible=false).",
+                ADMIN_ERRORS,
             )
         },
         "/admin/reset": {
@@ -367,7 +422,8 @@ def build_swagger(host):
                 "access so a miniapp becomes visible to them (GrantSystemAccess). Tier 2 (membership): the "
                 "admin then adds the user as a member inside the miniapp so they can use it "
                 "(AddMiniappMember). The mock LMS (lms) is always visible and its members have a role: "
-                "learner or instructor. Admin operations (/admin/...) use the admin API key in X-API-Key; "
+                "learner or instructor. Grants are blocked (403 NOT_ELIGIBLE) "
+                "for users who are not eligible: call CheckEligibility first. Admin operations (/admin/...) use the admin API key in X-API-Key; "
                 "user operations (/me..., UseMiniapp) use that user's own key to verify the result."
             ),
         },

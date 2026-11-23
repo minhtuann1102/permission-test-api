@@ -11,9 +11,10 @@ Base URL: `https://permission-test-api-jvd4.vercel.app`.
 
 ## Giao diện demo
 
-- `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**.
+- `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**, **user3**.
   - Admin: bảng người dùng × miniapp, mỗi ô có công tắc *Quyền hệ thống* (tầng 1) và *Thành viên* (tầng 2),
-    nút *Reset dữ liệu*. Cột LMS thay công tắc *Thành viên* bằng ô chọn *Vai trò*. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
+    nút *Reset dữ liệu*. Cột LMS thay công tắc *Thành viên* bằng ô chọn *Vai trò*. Dưới tên người dùng là
+    đơn vị · chức danh, người đã nghỉ việc có nhãn *Đã nghỉ việc*. Thao tác bị chặn (`NOT_ELIGIBLE`) hiện lý do ngay trong ô. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
   - user1 / user2: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
   - Tự cập nhật mỗi 3 giây; ô nào vừa đổi do agent (hoặc nơi khác) sẽ được tô sáng.
 - `/status`: bảng trạng thái quyền chỉ đọc, không cần key.
@@ -25,6 +26,41 @@ Base URL: `https://permission-test-api-jvd4.vercel.app`.
 | `admin` | admin | biến môi trường `ADMIN_API_KEY` (mặc định `admin-key-123`, **hãy đổi khi deploy**) |
 | `user1` | user | `user1-key-123` |
 | `user2` | user | `user2-key-123` |
+| `user3` | user | `user3-key-123` |
+
+## Người dùng mẫu và điều kiện cấp quyền
+
+Dữ liệu tổ chức giả lập, dùng để API **tự kiểm tra và chặn** người không đủ điều kiện. Agent chỉ đọc kết quả.
+
+| username | email | Đơn vị | Chức danh | Quản lý trực tiếp | Trạng thái |
+|---|---|---|---|---|---|
+| `admin` | `admin@demo.local` | Phòng CNTT | Quản trị hệ thống | (trống) | ACTIVE |
+| `user1` | `user1@demo.local` | Phòng Đào tạo (L&D) | Chuyên viên đào tạo | `truongphong.daotao@demo.local` | ACTIVE |
+| `user2` | `user2@demo.local` | Phòng Kinh doanh | Nhân viên kinh doanh | `truongphong.kinhdoanh@demo.local` | ACTIVE |
+| `user3` | `user3@demo.local` | Phòng Kinh doanh | Nhân viên kinh doanh | `truongphong.kinhdoanh@demo.local` | **RESIGNED** |
+
+Luật (bảng `role_rules`, mỗi dòng là một cách đủ điều kiện: đơn vị khớp chính xác **hoặc** chức danh chứa từ khoá, không phân biệt hoa thường):
+
+| Miniapp / vai trò | Ai đủ điều kiện |
+|---|---|
+| `lms` / `instructor` (Giảng viên) | Phòng Đào tạo (L&D), hoặc chức danh chứa "giảng viên" |
+| Mọi cặp khác (`lms` / `learner`, `leave`, `expense`, `inventory`) | Mọi người |
+| Mọi thao tác cấp | Không cấp cho người `RESIGNED` (đã nghỉ việc). Thu hồi luôn được phép |
+
+- `GET /admin/eligibility?username=&miniapp_id=&role=&approver_email=` (`CheckEligibility`, admin): **luôn trả 200**
+  với `eligible`, `reasons` (câu tiếng Việt), đơn vị, chức danh, trạng thái, `manager_email`.
+  Truyền `approver_email` thì có thêm `approver_checked: true` và `approver_ok` (người duyệt có phải quản lý trực tiếp không).
+- `GrantSystemAccess` và `AddMiniappMember` (kể cả đổi vai trò) trả `403 NOT_ELIGIBLE` khi không đủ điều kiện,
+  `detail` là lý do đầu tiên, và không ghi gì vào database. `RevokeSystemAccess`, `RemoveMiniappMember` không bị chặn.
+- `GetMe`, `ListUsers`, `FindUserByEmail` trả thêm `department`, `title`, `manager_email`, `status`.
+
+```bash
+B=https://permission-test-api-jvd4.vercel.app; A="X-API-Key: <admin key>"
+curl -s "$B/admin/eligibility?username=user1&miniapp_id=lms&role=instructor" -H "$A"   # eligible: true, "Thuộc Phòng Đào tạo (L&D)"
+curl -s "$B/admin/eligibility?username=user2&miniapp_id=lms&role=instructor" -H "$A"   # eligible: false
+curl -s "$B/admin/eligibility?username=user3&miniapp_id=leave" -H "$A"                 # eligible: false, đã nghỉ việc
+curl -s "$B/admin/eligibility?username=user1&miniapp_id=leave&approver_email=ai.do@demo.local" -H "$A"  # approver_ok: false
+```
 
 Miniapp: `leave` (Nghỉ phép), `expense` (Chi phí), `inventory` (Kho), `lms` (LMS).
 
@@ -51,7 +87,7 @@ curl -s "$B/admin/check?username=user1&miniapp_id=leave" -H "$A"
 curl -s -X POST $B/admin/reset -H "$A"          # về trạng thái ban đầu
 ```
 
-Lỗi luôn là JSON `{"detail": "...", "code": "..."}`. `/admin/check` luôn trả 200.
+Lỗi luôn là JSON `{"detail": "...", "code": "..."}`. `/admin/check` và `/admin/eligibility` luôn trả 200.
 
 ## Deploy lên Vercel
 

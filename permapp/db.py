@@ -9,9 +9,11 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    Integer,
     MetaData,
     String,
     Table,
+    UniqueConstraint,
     create_engine,
     delete,
     inspect,
@@ -35,6 +37,11 @@ users = Table(
     Column("role", String(16), nullable=False),  # 'admin' | 'user'
     Column("display_name", String(128), nullable=False),
     Column("email", String(254), nullable=True),  # mock identity; matched case-insensitively
+    # Mock org data used by the eligibility rules. Blank values are "" (never null in responses).
+    Column("department", String(128), nullable=True),
+    Column("title", String(128), nullable=True),
+    Column("manager_email", String(254), nullable=True),  # direct manager, need not be an account here
+    Column("status", String(16), nullable=True),  # 'ACTIVE' | 'RESIGNED'
 )
 
 miniapps = Table(
@@ -64,13 +71,40 @@ miniapp_grants = Table(
     Column("role", String(32), nullable=True),  # "" when the miniapp has no roles
 )
 
+# Eligibility rules: each row is one way to qualify for (miniapp_id, role). A user qualifies when
+# their department equals `department`, OR their title contains `title_keyword` (case-insensitive).
+# A (miniapp, role) pair with no rows is open to everyone. Blank columns are "".
+role_rules = Table(
+    "role_rules",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("miniapp_id", String(64), nullable=False),
+    Column("role", String(32), nullable=False),
+    Column("department", String(128), nullable=False),
+    Column("title_keyword", String(128), nullable=False),
+    UniqueConstraint("miniapp_id", "role", "department", "title_keyword", name="uq_role_rules"),
+)
+
 SEED_USERS = [
     {"username": "admin", "api_key": None, "role": "admin", "display_name": "Quản trị viên",
-     "email": "admin@demo.local"},
+     "email": "admin@demo.local", "department": "Phòng CNTT", "title": "Quản trị hệ thống",
+     "manager_email": "", "status": "ACTIVE"},
     {"username": "user1", "api_key": "user1-key-123", "role": "user", "display_name": "Người dùng 1",
-     "email": "user1@demo.local"},
+     "email": "user1@demo.local", "department": "Phòng Đào tạo (L&D)", "title": "Chuyên viên đào tạo",
+     "manager_email": "truongphong.daotao@demo.local", "status": "ACTIVE"},
     {"username": "user2", "api_key": "user2-key-123", "role": "user", "display_name": "Người dùng 2",
-     "email": "user2@demo.local"},
+     "email": "user2@demo.local", "department": "Phòng Kinh doanh", "title": "Nhân viên kinh doanh",
+     "manager_email": "truongphong.kinhdoanh@demo.local", "status": "ACTIVE"},
+    {"username": "user3", "api_key": "user3-key-123", "role": "user", "display_name": "Người dùng 3",
+     "email": "user3@demo.local", "department": "Phòng Kinh doanh", "title": "Nhân viên kinh doanh",
+     "manager_email": "truongphong.kinhdoanh@demo.local", "status": "RESIGNED"},
+]
+
+ORG_COLUMNS = ["email", "department", "title", "manager_email", "status"]
+
+SEED_ROLE_RULES = [
+    {"miniapp_id": "lms", "role": "instructor", "department": "Phòng Đào tạo (L&D)", "title_keyword": ""},
+    {"miniapp_id": "lms", "role": "instructor", "department": "", "title_keyword": "giảng viên"},
 ]
 
 SEED_MINIAPPS = [
@@ -149,6 +183,10 @@ def _create_schema(engine):
 # Columns added after the first deploy. Old databases (Neon) get them in place.
 LATE_COLUMNS = [
     ("users", "email", "VARCHAR(254)"),
+    ("users", "department", "VARCHAR(128)"),
+    ("users", "title", "VARCHAR(128)"),
+    ("users", "manager_email", "VARCHAR(254)"),
+    ("users", "status", "VARCHAR(16)"),
     ("miniapps", "always_visible", "BOOLEAN"),
     ("miniapps", "roles", "VARCHAR(256)"),
     ("miniapp_grants", "role", "VARCHAR(32)"),
@@ -183,6 +221,19 @@ def _backfill(engine, table, key_col, seed_rows, columns):
                 )
 
 
+def _seed_role_rules(engine):
+    for rule in SEED_ROLE_RULES:
+        try:
+            with engine.begin() as c:
+                exists = c.execute(select(role_rules.c.id).where(
+                    *(role_rules.c[k] == v for k, v in rule.items())
+                )).first()
+                if exists is None:
+                    c.execute(role_rules.insert().values(**rule))
+        except IntegrityError:
+            pass  # a concurrent cold start inserted it first
+
+
 def init_db(engine):
     _create_schema(engine)
     for table_name, column, sql_type in LATE_COLUMNS:
@@ -191,20 +242,22 @@ def init_db(engine):
         _insert_if_absent(engine, users, users.c.username, row)
     for row in SEED_MINIAPPS:
         _insert_if_absent(engine, miniapps, miniapps.c.id, row)
-    _backfill(engine, users, users.c.username, SEED_USERS, ["email"])
+    _backfill(engine, users, users.c.username, SEED_USERS, ORG_COLUMNS)
     _backfill(engine, miniapps, miniapps.c.id, SEED_MINIAPPS, ["always_visible", "roles"])
     with engine.begin() as c:  # memberships granted before roles existed have no role
         c.execute(update(miniapp_grants).where(miniapp_grants.c.role.is_(None)).values(role=""))
+    _seed_role_rules(engine)
 
 
 def reset_db(engine):
-    """Remove every grant and restore seed users/miniapps to their seed values."""
+    """Remove every grant and restore seed users, miniapps and eligibility rules to their seed values."""
     _create_schema(engine)
     for table_name, column, sql_type in LATE_COLUMNS:
         _ensure_column(engine, table_name, column, sql_type)
     with engine.begin() as c:
         c.execute(delete(miniapp_grants))
         c.execute(delete(system_grants))
+        c.execute(delete(role_rules))
         for row in _seed_users():
             c.execute(update(users).where(users.c.username == row["username"]).values(**row))
         for row in SEED_MINIAPPS:
