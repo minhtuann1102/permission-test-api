@@ -7,7 +7,7 @@ trong **Copilot Studio** tự động cấp quyền 2 tầng:
 2. **Thành viên miniapp** (tầng 2): admin thêm user vào miniapp → user *dùng được* miniapp.
    Phải có tầng 1 trước, nếu không API trả `409 SYSTEM_ACCESS_REQUIRED`.
 
-Base URL: `https://<project>.vercel.app`. Trang `/` hiển thị trạng thái quyền hiện tại.
+Base URL: `https://permission-test-api-jvd4.vercel.app`. Trang `/` hiển thị trạng thái quyền hiện tại.
 
 ## API key (header `X-API-Key`)
 
@@ -22,7 +22,7 @@ Miniapp: `leave` (Nghỉ phép), `expense` (Chi phí), `inventory` (Kho).
 ## Luồng kiểm thử
 
 ```bash
-B=https://<project>.vercel.app; A="X-API-Key: <admin key>"; U="X-API-Key: user1-key-123"
+B=https://permission-test-api-jvd4.vercel.app; A="X-API-Key: <admin key>"; U="X-API-Key: user1-key-123"
 curl -s -X POST $B/admin/system-access -H "$A" -H "Content-Type: application/json" -d '{"username":"user1","miniapp_id":"leave"}'
 curl -s $B/me/miniapps -H "$U"                  # leave, can_use=false
 curl -s -X POST $B/admin/miniapps/leave/members -H "$A" -H "Content-Type: application/json" -d '{"username":"user1"}'
@@ -40,15 +40,15 @@ Lỗi luôn là JSON `{"detail": "...", "code": "..."}`. `/admin/check` luôn tr
    Kiểm tra: `npx vercel env ls` có `DATABASE_URL`.
 3. Thêm biến môi trường Production:
    - `ADMIN_API_KEY` = một chuỗi bí mật (key mặc định đã công khai trong repo này).
-   - `PUBLIC_HOST` = `<project>.vercel.app` (để `host` trong swagger luôn là domain production).
+   - `PUBLIC_HOST` = `permission-test-api-jvd4.vercel.app` (để `host` trong swagger luôn là domain production).
 4. `npx vercel --prod --yes`.
-5. Kiểm tra **không dùng cookie**: `curl -s https://<project>.vercel.app/health` phải trả
+5. Kiểm tra **không dùng cookie**: `curl -s https://permission-test-api-jvd4.vercel.app/health` phải trả
    `{"status":"ok"}`. Nếu nhận về trang HTML đăng nhập Vercel → tắt *Deployment Protection* cho
    Production (Settings → Deployment Protection).
 
 ## Import vào Copilot Studio
 
-Dùng URL `https://<project>.vercel.app/swagger.json` (OpenAPI 2.0). Lấy URL từ domain production,
+Dùng URL `https://permission-test-api-jvd4.vercel.app/swagger.json` (OpenAPI 2.0). Lấy URL từ domain production,
 không lấy URL của từng deployment (những URL đó bị Deployment Protection chặn).
 
 - Copilot Studio → agent → **Tools → Add a tool → REST API** (hoặc tạo *custom connector* trong
