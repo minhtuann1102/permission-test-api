@@ -51,6 +51,11 @@ async def _http_error(request: Request, exc: StarletteHTTPException):
     return _error(exc.status_code, code, str(exc.detail))
 
 
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception):
+    return _error(500, "INTERNAL_ERROR", f"Lỗi máy chủ: {type(exc).__name__}")
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError):
     parts = []

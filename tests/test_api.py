@@ -64,3 +64,18 @@ def test_public_pages(client):
 def test_unknown_route_is_json(client):
     r = client.get("/nope")
     assert r.status_code == 404 and r.json()["code"] == "NOT_FOUND"
+
+
+def test_unhandled_error_is_json(client, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app as app_module
+    from permapp import service
+
+    def boom(engine):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(service, "list_miniapps", boom)
+    with TestClient(app_module.app, raise_server_exceptions=False) as c:
+        r = c.get("/admin/miniapps", headers=ADMIN)
+    assert r.status_code == 500 and r.json()["code"] == "INTERNAL_ERROR"
