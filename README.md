@@ -57,6 +57,9 @@ Lỗi luôn là JSON `{"detail": "...", "code": "..."}`. `/admin/check` luôn tr
 
 ## Import vào Copilot Studio
 
+Hướng dẫn đầy đủ (tạo agent, tool, gán key, instructions, kiểm tra, xử lý sự cố):
+[docs/copilot-studio-agent-setup.md](docs/copilot-studio-agent-setup.md).
+
 Dùng URL `https://permission-test-api-jvd4.vercel.app/swagger.json` (OpenAPI 2.0). Lấy URL từ domain production,
 không lấy URL của từng deployment (những URL đó bị Deployment Protection chặn).
 
