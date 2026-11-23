@@ -1,5 +1,35 @@
 <!doctype html>
 <html lang="vi">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quản lý quyền miniapp</title></head>
-<body><main id="app"></main></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Quản lý quyền miniapp</title>
+  <meta name="description" content="Cấp quyền hệ thống và thành viên miniapp cho người dùng, bằng tay hoặc qua agent.">
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/console.css">
+  <script defer src="/static/console-logic.js"></script>
+  <script defer src="/static/console.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar__row">
+      <a class="wordmark" href="/" aria-label="Quản lý quyền miniapp, trang chính">Quản lý quyền miniapp</a>
+      <p class="sync" id="sync" aria-live="polite"></p>
+      <nav class="roles" aria-label="Chọn tài khoản" id="roles">
+        <button type="button" class="role" data-role="admin" aria-pressed="false">Admin</button>
+        <button type="button" class="role" data-role="user1" aria-pressed="false">user1</button>
+        <button type="button" class="role" data-role="user2" aria-pressed="false">user2</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="shell main">
+    <noscript>
+      <p class="plain">Trang này cần JavaScript. Xem bảng trạng thái quyền chỉ đọc tại <a href="/status">/status</a>.</p>
+    </noscript>
+  </main>
+</body>
 </html>
