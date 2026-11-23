@@ -324,6 +324,9 @@
     state.notice = null;
     state.view = null;
     state.keyError = null;
+    state.changingKey = false;
+    state.confirmReset = false;
+    clearTimeout(state.resetTimer);
     paintRoles();
     load("initial");
   }
@@ -334,11 +337,232 @@
     load("poll").then(function () { state.loading = false; }, function () { state.loading = false; });
   }
 
-  // ---------- admin (filled in by the admin view) ----------
+  // ---------- admin ----------
 
-  function fetchAdmin() { return Promise.resolve({ ok: false, status: 0, detail: "Chưa hỗ trợ" }); }
-  function renderAdmin() {}
-  function renderKeyForm() {}
+  function fetchAdmin(key) {
+    return Promise.all([api("/admin/users", { key: key }), api("/admin/miniapps", { key: key })]).then(function (rs) {
+      var bad = rs.filter(function (r) { return !r.ok; })[0];
+      if (bad) return { ok: false, status: bad.status, detail: bad.data.detail };
+      var users = rs[0].data.users;
+      var miniapps = rs[1].data.miniapps;
+      return { ok: true, data: { users: users, miniapps: miniapps }, snapshot: L.adminSnapshot(users, miniapps) };
+    });
+  }
+
+  function switchButton(kind, user, appId, on, label) {
+    var id = kind + "|" + user.username + "|" + appId;
+    return h("button", {
+      type: "button",
+      class: "switch",
+      role: "switch",
+      "aria-checked": on ? "true" : "false",
+      "data-focus": id,
+      onclick: function (ev) { toggle(kind, user.username, appId, on, ev.currentTarget); },
+    }, [
+      h("span", { class: "switch__track", "aria-hidden": "true" }, [h("span", { class: "switch__thumb" })]),
+      h("span", { text: label }),
+    ]);
+  }
+
+  function renderAdmin(highlight) {
+    var users = state.data.users.filter(function (u) { return u.role === "user"; });
+    var miniapps = state.data.miniapps;
+
+    var resetArea = state.confirmReset
+      ? [
+          h("button", { type: "button", class: "key key--danger", "data-focus": "reset-confirm", text: "Xác nhận reset", onclick: doReset }),
+          h("button", { type: "button", class: "key key--quiet", "data-focus": "reset-cancel", text: "Huỷ", onclick: cancelReset }),
+        ]
+      : [h("button", { type: "button", class: "key key--quiet key--danger", "data-focus": "reset", text: "Reset dữ liệu", onclick: askReset })];
+
+    var head = h("div", { class: "head" }, [
+      h("div", null, [
+        h("h1", { text: "Phân quyền miniapp" }),
+        h("p", { text: "Bước 1: bật Quyền hệ thống để người dùng nhìn thấy miniapp. Bước 2: bật Thành viên để họ dùng được. Phải có bước 1 trước bước 2." }),
+      ]),
+      h("div", { class: "head__actions" }, [
+        h("button", { type: "button", class: "key key--quiet", "data-focus": "change-key", text: "Đổi admin key", onclick: changeKey }),
+      ].concat(resetArea)),
+    ]);
+
+    if (!users.length || !miniapps.length) {
+      mount([head, noticeEl(), h("div", { class: "state-block" }, [
+        h("h2", { text: "Chưa có người dùng hoặc miniapp nào" }),
+        h("p", { text: "Dữ liệu mẫu được tạo khi reset. Bấm Reset dữ liệu để tạo lại." }),
+      ])]);
+      return;
+    }
+
+    var thead = h("thead", null, [h("tr", null, [h("th", { scope: "col", text: "Người dùng" })].concat(
+      miniapps.map(function (m) { return h("th", { scope: "col" }, [m.name, h("small", { text: m.id })]); })
+    ))]);
+
+    var rows = users.map(function (u) {
+      var cells = miniapps.map(function (m) {
+        var st = L.cellState(u, m.id);
+        var sees = st !== "none";
+        var member = st === "use";
+        var key = u.username + "|" + m.id;
+        return h("td", { "data-label": m.name }, [
+          h("div", { class: "cell" + (highlight.indexOf(key) !== -1 ? " is-changed" : "") }, [
+            h("p", { class: "state state--" + st }, [icon(st), L.STATE_LABEL[st]]),
+            switchButton("system", u, m.id, sees, "Quyền hệ thống"),
+            switchButton("member", u, m.id, member, "Thành viên"),
+          ]),
+        ]);
+      });
+      return h("tr", null, [h("th", { scope: "row", class: "who" }, [h("b", { text: u.display_name }), h("span", { text: u.username })])].concat(cells));
+    });
+
+    mount([
+      head,
+      noticeEl(),
+      h("div", { class: "grid-wrap" }, [h("table", { class: "grid" }, [
+        h("caption", { class: "visually-hidden", text: "Quyền của từng người dùng với từng miniapp" }),
+        thead,
+        h("tbody", null, rows),
+      ])]),
+    ]);
+  }
+
+  function toggle(kind, username, appId, isOn, btn) {
+    if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
+    var focusId = btn.getAttribute("data-focus");
+    var key = currentKey();
+    var req;
+    if (kind === "system") {
+      req = isOn
+        ? api("/admin/system-access/" + encodeURIComponent(username) + "/" + encodeURIComponent(appId), { method: "DELETE", key: key })
+        : api("/admin/system-access", { method: "POST", key: key, body: { username: username, miniapp_id: appId } });
+    } else {
+      req = isOn
+        ? api("/admin/miniapps/" + encodeURIComponent(appId) + "/members/" + encodeURIComponent(username), { method: "DELETE", key: key })
+        : api("/admin/miniapps/" + encodeURIComponent(appId) + "/members", { method: "POST", key: key, body: { username: username } });
+    }
+    beginMutation();
+    btn.setAttribute("aria-disabled", "true");
+    btn.setAttribute("aria-busy", "true");
+    return req.then(function (r) {
+      endMutation();
+      if (!r.ok) {
+        if (r.status === 401 || r.status === 403) return load("after");
+        notify("error", r.data.detail);
+      } else {
+        var what = kind === "system" ? "quyền hệ thống" : "thành viên";
+        notify("success", (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + appId + " cho " + username + ".");
+      }
+      state.dataSig = null; // force a repaint so the switch shows the server's truth
+      return load("after").then(function () {
+        var again = app.querySelector('[data-focus="' + focusId + '"]');
+        if (again) again.focus();
+      });
+    });
+  }
+
+  function askReset() {
+    state.confirmReset = true;
+    clearTimeout(state.resetTimer);
+    state.resetTimer = setTimeout(cancelReset, 5000);
+    keepFocusOn("reset-confirm", function () { render(); });
+  }
+
+  function cancelReset() {
+    clearTimeout(state.resetTimer);
+    if (!state.confirmReset) return;
+    state.confirmReset = false;
+    if (state.view === "admin") keepFocusOn("reset", function () { render(); });
+  }
+
+  function doReset(ev) {
+    clearTimeout(state.resetTimer);
+    var btn = ev.currentTarget;
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+    beginMutation();
+    api("/admin/reset", { method: "POST", key: currentKey() }).then(function (r) {
+      endMutation();
+      state.confirmReset = false;
+      if (r.ok) notify("success", "Đã đưa dữ liệu về trạng thái ban đầu.");
+      else if (r.status !== 401 && r.status !== 403) notify("error", r.data.detail);
+      state.dataSig = null;
+      load("after").then(function () {
+        var again = app.querySelector('[data-focus="reset"]');
+        if (again) again.focus();
+      });
+    });
+  }
+
+  function keepFocusOn(id, fn) {
+    fn();
+    var el = app.querySelector('[data-focus="' + id + '"]');
+    if (el) el.focus();
+  }
+
+  function changeKey() {
+    state.view = "key";
+    state.keyError = null;
+    state.changingKey = true;
+    render();
+  }
+
+  function renderKeyForm() {
+    var help = h("p", { class: "field__help" + (state.keyError ? " is-err" : ""), id: "key-help", "aria-live": "polite", text: state.keyError || "" });
+    var input = h("input", {
+      class: "input",
+      id: "admin-key",
+      name: "admin-key",
+      type: "password",
+      autocomplete: "current-password",
+      required: true,
+      "aria-invalid": state.keyError ? "true" : null,
+      "aria-describedby": "key-help",
+    });
+    var submit = h("button", { type: "submit", class: "key key--primary", text: "Lưu và tiếp tục" });
+    var form = h("form", { class: "panel", novalidate: true }, [
+      h("h1", { text: "Nhập admin key" }),
+      h("p", { text: "Key được lưu trong trình duyệt này để lần sau không phải nhập lại. Key của user1 và user2 đã có sẵn." }),
+      h("div", { class: "field" }, [h("label", { for: "admin-key", text: "Admin key" }), input, help]),
+      h("div", { class: "head__actions" }, [
+        submit,
+        state.changingKey && store.get(K_ADMIN)
+          ? h("button", { type: "button", class: "key key--quiet", text: "Huỷ", onclick: function () { state.changingKey = false; load("initial"); } })
+          : null,
+      ]),
+    ]);
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var value = input.value.trim();
+      if (!value) {
+        showKeyError(input, help, "Nhập admin key để tiếp tục.");
+        return;
+      }
+      submit.disabled = true;
+      submit.setAttribute("aria-busy", "true");
+      api("/admin/users", { key: value }).then(function (r) {
+        submit.disabled = false;
+        submit.removeAttribute("aria-busy");
+        if (r.ok) {
+          store.set(K_ADMIN, value);
+          state.keyError = null;
+          state.changingKey = false;
+          if (state.role === "admin") load("initial");
+        } else if (r.status === 401 || r.status === 403) {
+          showKeyError(input, help, "Admin key không đúng. Kiểm tra lại key rồi thử lại.");
+        } else {
+          showKeyError(input, help, r.data.detail + ". Thử lại sau giây lát.");
+        }
+      });
+    });
+    mount([form]);
+    input.focus();
+  }
+
+  function showKeyError(input, help, text) {
+    input.setAttribute("aria-invalid", "true");
+    help.className = "field__help is-err";
+    help.textContent = text;
+    input.focus();
+  }
 
   // ---------- boot ----------
 
