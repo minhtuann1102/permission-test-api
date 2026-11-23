@@ -13,7 +13,7 @@ Base URL: `https://permission-test-api-jvd4.vercel.app`.
 
 - `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**.
   - Admin: bảng người dùng × miniapp, mỗi ô có công tắc *Quyền hệ thống* (tầng 1) và *Thành viên* (tầng 2),
-    nút *Reset dữ liệu*. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
+    nút *Reset dữ liệu*. Cột LMS thay công tắc *Thành viên* bằng ô chọn *Vai trò*. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
   - user1 / user2: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
   - Tự cập nhật mỗi 3 giây; ô nào vừa đổi do agent (hoặc nơi khác) sẽ được tô sáng.
 - `/status`: bảng trạng thái quyền chỉ đọc, không cần key.
@@ -26,7 +26,18 @@ Base URL: `https://permission-test-api-jvd4.vercel.app`.
 | `user1` | user | `user1-key-123` |
 | `user2` | user | `user2-key-123` |
 
-Miniapp: `leave` (Nghỉ phép), `expense` (Chi phí), `inventory` (Kho).
+Miniapp: `leave` (Nghỉ phép), `expense` (Chi phí), `inventory` (Kho), `lms` (LMS).
+
+**LMS giả lập** (`lms`) chỉ có trong API này, không kết nối hệ thống LMS nào khác:
+
+- Luôn hiển thị với mọi người, không cần quyền hệ thống (tầng 1). `GrantSystemAccess` trả `already_granted: true`.
+- Thành viên có vai trò `learner` (Học viên) hoặc `instructor` (Giảng viên):
+  `POST /admin/miniapps/lms/members` body `{"username": "user1", "role": "instructor"}`.
+  Bỏ trống `role` thì là `learner`. Gọi lại với vai trò khác thì đổi vai trò. Vai trò sai trả `422 INVALID_ROLE`.
+- `CheckAccess`, `ListMyMiniapps` trả thêm `role`; `ListUsers`, `FindUserByEmail` trả thêm `member_roles`.
+
+`/swagger.json` trả header CORS `Access-Control-Allow-Origin: *` để công cụ import chạy trên trình duyệt đọc được spec.
+Các endpoint khác, nhất là `/admin`, không có CORS.
 
 ## Luồng kiểm thử
 

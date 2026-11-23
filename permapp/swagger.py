@@ -26,7 +26,8 @@ DEFINITIONS = {
             "detail": _str("Human-readable error message (Vietnamese)."),
             "code": _str(
                 "Machine-readable error code: UNAUTHORIZED, ADMIN_REQUIRED, NOT_VISIBLE, NOT_MEMBER, "
-                "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, VALIDATION_ERROR, NOT_FOUND."
+                "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, INVALID_ROLE, VALIDATION_ERROR, "
+                "NOT_FOUND."
             ),
         },
     },
@@ -43,9 +44,13 @@ DEFINITIONS = {
     "Miniapp": {
         "type": "object",
         "properties": {
-            "id": _str("Miniapp id, e.g. 'leave', 'expense', 'inventory'."),
+            "id": _str("Miniapp id, e.g. 'leave', 'expense', 'inventory', 'lms'."),
             "name": _str("Miniapp display name."),
             "description": _str("What the miniapp does."),
+            "always_visible": _bool("True if every user sees this miniapp without system access (e.g. 'lms')."),
+            "roles": {"type": "array", "items": {"type": "string"},
+                      "description": "Member roles of this miniapp, lowest first (lms: learner, instructor). "
+                                     "Empty if the miniapp has no roles."},
         },
     },
     "VisibleMiniapp": {
@@ -54,7 +59,10 @@ DEFINITIONS = {
             "id": _str("Miniapp id."),
             "name": _str("Miniapp display name."),
             "description": _str("What the miniapp does."),
+            "always_visible": _bool("True if every user sees this miniapp without system access."),
+            "roles": {"type": "array", "items": {"type": "string"}, "description": "Member roles of this miniapp."},
             "can_use": _bool("True if the caller is a member of this miniapp (tier 2) and can use it."),
+            "role": _str("The caller's member role, e.g. 'learner' or 'instructor'. Empty if none."),
         },
     },
     "MyMiniapps": {
@@ -76,6 +84,15 @@ DEFINITIONS = {
                               "description": "Miniapp ids this user has system access to (tier 1)."},
             "memberships": {"type": "array", "items": {"type": "string"},
                             "description": "Miniapp ids this user is a member of (tier 2)."},
+            "member_roles": {"type": "array", "items": _ref("MemberRole"),
+                             "description": "Member role per miniapp, only for miniapps with roles (lms)."},
+        },
+    },
+    "MemberRole": {
+        "type": "object",
+        "properties": {
+            "miniapp_id": _str("Miniapp id, e.g. 'lms'."),
+            "role": _str("Member role, e.g. 'learner' or 'instructor'."),
         },
     },
     "UserList": {"type": "object", "properties": {"users": {"type": "array", "items": _ref("UserWithGrants")}}},
@@ -91,13 +108,18 @@ DEFINITIONS = {
     "MemberIn": {
         "type": "object",
         "required": ["username"],
-        "properties": {"username": _str("Username to add as a member, e.g. 'user1'.")},
+        "properties": {
+            "username": _str("Username to add as a member, e.g. 'user1'."),
+            "role": _str("Member role, only for miniapps with roles. lms: 'learner' (Học viên, the default "
+                         "when blank) or 'instructor' (Giảng viên). Leave blank for other miniapps."),
+        },
     },
     "Grant": {
         "type": "object",
         "properties": {
             "username": _str("Username."),
             "miniapp_id": _str("Miniapp id."),
+            "role": _str("Member role now held, e.g. 'instructor'. Empty for system access and role-less miniapps."),
             "already_granted": _bool("True if the permission already existed (nothing changed)."),
         },
     },
@@ -116,6 +138,7 @@ DEFINITIONS = {
             "miniapp_id": _str("Miniapp id checked."),
             "visible": _bool("True if the user can see the miniapp (has system access, tier 1)."),
             "can_use": _bool("True if the user can use the miniapp (is a member, tier 2)."),
+            "role": _str("The user's member role, e.g. 'learner' or 'instructor'. Empty if none."),
         },
     },
     "UseResult": {
@@ -158,7 +181,7 @@ def _body(schema_name, desc):
     return {"name": "body", "in": "body", "required": True, "description": desc, "schema": _ref(schema_name)}
 
 
-MINIAPP_PATH = _path("miniapp_id", "Miniapp id, e.g. 'leave', 'expense' or 'inventory'.")
+MINIAPP_PATH = _path("miniapp_id", "Miniapp id, e.g. 'leave', 'expense', 'inventory' or 'lms'.")
 USERNAME_PATH = _path("username", "Username, e.g. 'user1'.")
 
 
@@ -261,6 +284,7 @@ def _paths():
                 "GrantSystemAccess", "Grant system access to a miniapp (step 1)",
                 "Admin only (admin key). STEP 1 of 2: grants a user system-level access so the miniapp "
                 "becomes VISIBLE to them. The user still cannot use it until step 2 (AddMiniappMember). "
+                "Always-visible miniapps (lms) need no system access: the call returns already_granted=true. "
                 "Safe to call twice (already_granted=true).",
                 [ADMIN_KEY_PARAM, _body("SystemAccessIn", "Who gets access to which miniapp.")],
                 "Grant", "System access granted (or already existed).", {**ADMIN_ERRORS, **E404, **E422},
@@ -280,10 +304,14 @@ def _paths():
                 "AddMiniappMember", "Add a user as a miniapp member (step 2)",
                 "Admin only (admin key). STEP 2 of 2: inside the miniapp, adds the user as a member so they "
                 "can USE it. Requires step 1 (GrantSystemAccess) first, otherwise returns 409 "
-                "SYSTEM_ACCESS_REQUIRED. Safe to call twice (already_granted=true).",
-                [ADMIN_KEY_PARAM, MINIAPP_PATH, _body("MemberIn", "The user to add.")],
-                "Grant", "Member added (or already a member).",
-                {**ADMIN_ERRORS, **E404, **E422,
+                "SYSTEM_ACCESS_REQUIRED, except for always-visible miniapps (lms). For lms pass role "
+                "'learner' (Học viên) or 'instructor' (Giảng viên); calling again with another role changes "
+                "the role. Safe to call twice (already_granted=true).",
+                [ADMIN_KEY_PARAM, MINIAPP_PATH, _body("MemberIn", "The user to add, and the role for lms.")],
+                "Grant", "Member added, role changed, or already a member with this role.",
+                {**ADMIN_ERRORS, **E404,
+                 "422": _err("A body field is missing (VALIDATION_ERROR) or the role is not valid for this "
+                             "miniapp (INVALID_ROLE)."),
                  "409": _err("The user has no system access to this miniapp yet (SYSTEM_ACCESS_REQUIRED).")},
             )
         },
@@ -300,9 +328,9 @@ def _paths():
         "/admin/check": {
             "get": _op(
                 "CheckAccess", "Check a user's access to a miniapp",
-                "Admin only (admin key). Always returns 200 with visible (tier 1) and can_use (tier 2) for "
-                "the given user and miniapp. Use after granting to confirm the result. Unknown user or "
-                "miniapp returns visible=false, can_use=false.",
+                "Admin only (admin key). Always returns 200 with visible (tier 1), can_use (tier 2) and the "
+                "member role (lms) for the given user and miniapp. Use after granting to confirm the result. "
+                "Unknown user or miniapp returns visible=false, can_use=false.",
                 [ADMIN_KEY_PARAM,
                  _query("username", "Username to check, e.g. 'user1'."),
                  _query("miniapp_id", "Miniapp id to check, e.g. 'leave'.")],
@@ -338,7 +366,8 @@ def build_swagger(host):
                 "Test API for two-tier miniapp permissions. Tier 1 (system access): an admin grants a user "
                 "access so a miniapp becomes visible to them (GrantSystemAccess). Tier 2 (membership): the "
                 "admin then adds the user as a member inside the miniapp so they can use it "
-                "(AddMiniappMember). Admin operations (/admin/...) use the admin API key in X-API-Key; "
+                "(AddMiniappMember). The mock LMS (lms) is always visible and its members have a role: "
+                "learner or instructor. Admin operations (/admin/...) use the admin API key in X-API-Key; "
                 "user operations (/me..., UseMiniapp) use that user's own key to verify the result."
             ),
         },

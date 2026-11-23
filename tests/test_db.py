@@ -23,7 +23,7 @@ def test_init_db_seeds_once(engine):
     init_db(engine)  # second call
     with engine.connect() as c:
         assert c.execute(select(func.count()).select_from(users)).scalar() == 3
-        assert c.execute(select(func.count()).select_from(miniapps)).scalar() == 3
+        assert c.execute(select(func.count()).select_from(miniapps)).scalar() == 4
         roles = dict(c.execute(select(users.c.username, users.c.role)).all())
     assert roles == {"admin": "admin", "user1": "user", "user2": "user"}
 
@@ -85,3 +85,26 @@ def test_reset_restores_seed_email(engine):
     reset_db(engine)
     with engine.connect() as c:
         assert c.execute(select(users.c.email).where(users.c.username == "user1")).scalar() == "user1@demo.local"
+
+
+def test_init_db_upgrades_old_miniapp_tables_in_place(tmp_path):
+    from sqlalchemy import text
+
+    from permapp.db import make_engine
+
+    eng = make_engine(f"sqlite:///{tmp_path}/old2.db")
+    with eng.begin() as c:  # schema before the mock LMS existed, with one membership
+        c.execute(text("CREATE TABLE miniapps (id VARCHAR(64) PRIMARY KEY, name VARCHAR(128) NOT NULL, "
+                       "description VARCHAR(512) NOT NULL)"))
+        c.execute(text("INSERT INTO miniapps VALUES ('leave', 'Nghỉ phép', 'x')"))
+        c.execute(text("CREATE TABLE miniapp_grants (username VARCHAR(64), miniapp_id VARCHAR(64), "
+                       "PRIMARY KEY (username, miniapp_id))"))
+        c.execute(text("INSERT INTO miniapp_grants VALUES ('user1', 'leave')"))
+    init_db(eng)
+    init_db(eng)  # idempotent
+    with eng.connect() as c:
+        apps = {r.id: (r.always_visible, r.roles) for r in c.execute(select(miniapps)).all()}
+        role = c.execute(select(miniapp_grants.c.role)).scalar()
+    eng.dispose()
+    assert apps["leave"] == (False, "") and apps["lms"] == (True, "learner,instructor")
+    assert role == ""

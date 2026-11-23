@@ -3,12 +3,28 @@
   "use strict";
 
   var STATE_LABEL = { none: "Không có quyền", see: "Chỉ nhìn thấy", use: "Dùng được" };
+  var ROLE_LABEL = { learner: "Học viên", instructor: "Giảng viên" };
 
-  function cellState(user, miniappId) {
-    var sees = (user.system_access || []).indexOf(miniappId) !== -1;
+  function roleLabel(role) {
+    return ROLE_LABEL[role] || role || "";
+  }
+
+  // alwaysVisible: miniapps like the mock LMS are seen by everyone without system access.
+  function cellState(user, miniappId, alwaysVisible) {
+    var sees = !!alwaysVisible || (user.system_access || []).indexOf(miniappId) !== -1;
     var member = (user.memberships || []).indexOf(miniappId) !== -1;
     if (sees && member) return "use";
     return sees ? "see" : "none";
+  }
+
+  // The member's role in a miniapp with roles, or "" (not a member, or the miniapp has no roles).
+  function memberRole(user, miniappId) {
+    var found = (user.member_roles || []).filter(function (r) { return r.miniapp_id === miniappId; })[0];
+    return found ? found.role : "";
+  }
+
+  function cellLabel(state, role) {
+    return STATE_LABEL[state] + (state === "use" && role ? " · " + roleLabel(role) : "");
   }
 
   function adminSnapshot(users, miniapps) {
@@ -16,7 +32,8 @@
     users.forEach(function (u) {
       if (u.role !== "user") return;
       miniapps.forEach(function (m) {
-        snap[u.username + "|" + m.id] = cellState(u, m.id);
+        var role = memberRole(u, m.id);
+        snap[u.username + "|" + m.id] = cellState(u, m.id, m.always_visible) + (role ? ":" + role : "");
       });
     });
     return snap;
@@ -25,7 +42,7 @@
   function userSnapshot(miniapps) {
     var snap = {};
     miniapps.forEach(function (m) {
-      snap[m.id] = m.can_use ? "use" : "see";
+      snap[m.id] = (m.can_use ? "use" : "see") + (m.role ? ":" + m.role : "");
     });
     return snap;
   }
@@ -101,7 +118,11 @@
 
   var api = {
     STATE_LABEL: STATE_LABEL,
+    ROLE_LABEL: ROLE_LABEL,
+    roleLabel: roleLabel,
     cellState: cellState,
+    memberRole: memberRole,
+    cellLabel: cellLabel,
     adminSnapshot: adminSnapshot,
     userSnapshot: userSnapshot,
     diffSnapshots: diffSnapshots,

@@ -220,7 +220,7 @@
       var result = h("p", { class: "app-card__result", "aria-live": "polite", "data-result": a.id });
       if (a.can_use) {
         foot = h("div", { class: "app-card__foot" }, [
-          h("p", { class: "state state--use" }, [icon("use"), "Dùng được"]),
+          h("p", { class: "state state--use" }, [icon("use"), L.cellLabel("use", a.role)]),
           h("button", { type: "button", class: "key", "data-focus": "use-" + a.id, text: "Mở miniapp", onclick: function (ev) { useMiniapp(a, ev.currentTarget, result); } }),
           result,
         ]);
@@ -425,15 +425,19 @@
 
     var rows = users.map(function (u) {
       var cells = miniapps.map(function (m) {
-        var st = L.cellState(u, m.id);
+        var st = L.cellState(u, m.id, m.always_visible);
         var sees = st !== "none";
         var member = st === "use";
         var key = u.username + "|" + m.id;
         return h("td", { "data-label": m.name }, [
           h("div", { class: "cell" + (highlight.indexOf(key) !== -1 ? " is-changed" : "") }, [
-            h("p", { class: "state state--" + st }, [icon(st), L.STATE_LABEL[st]]),
-            switchButton("system", u, m, sees, "Quyền hệ thống", 1, false),
-            switchButton("member", u, m, member, "Thành viên", 2, !sees),
+            h("p", { class: "state state--" + st }, [icon(st), L.cellLabel(st, L.memberRole(u, m.id))]),
+            m.always_visible
+              ? h("p", { class: "cell__note" }, [h("span", { class: "switch__step", "aria-hidden": "true", text: "1." }), "Luôn nhìn thấy, không cần quyền hệ thống"])
+              : switchButton("system", u, m, sees, "Quyền hệ thống", 1, false),
+            m.roles && m.roles.length
+              ? roleSelect(u, m, member)
+              : switchButton("member", u, m, member, "Thành viên", 2, !sees),
             state.cellError && state.cellError.key === key
               ? h("p", { class: "cell__error", role: "alert" }, [icon("error"), h("span", { text: state.cellError.text })])
               : null,
@@ -454,11 +458,42 @@
     ]);
   }
 
+  // Member control for miniapps with roles (LMS): pick a role, or "not a member".
+  function roleSelect(user, app, isMember) {
+    var id = "role|" + user.username + "|" + app.id;
+    var current = isMember ? L.memberRole(user, app.id) || app.roles[0] : "";
+    var sel = h("select", {
+      class: "role-select",
+      "data-focus": id,
+      "aria-label": "Vai trò của " + user.display_name + " trong " + app.name,
+    }, [h("option", { value: "", text: "Chưa là thành viên" })].concat(
+      app.roles.map(function (r) { return h("option", { value: r, text: L.roleLabel(r) }); })
+    ));
+    sel.value = current;
+    sel.addEventListener("change", function () { setRole(user, app, current, sel.value, sel); });
+    return h("label", { class: "role-field" }, [
+      h("span", { class: "switch__label" }, [h("span", { class: "switch__step", "aria-hidden": "true", text: "2." }), h("span", { text: "Vai trò" })]),
+      sel,
+    ]);
+  }
+
+  function setRole(user, app, from, to, el) {
+    if (from === to) return Promise.resolve();
+    var key = currentKey();
+    var base = "/admin/miniapps/" + encodeURIComponent(app.id) + "/members";
+    var req = to
+      ? api(base, { method: "POST", key: key, body: { username: user.username, role: to } })
+      : api(base + "/" + encodeURIComponent(user.username), { method: "DELETE", key: key });
+    var okText = to
+      ? "Đã đặt vai trò " + L.roleLabel(to) + " trong " + app.name + " cho " + user.display_name + "."
+      : "Đã gỡ thành viên " + app.name + " của " + user.display_name + ".";
+    return mutateCell(user, app, req, el, okText);
+  }
+
   function toggle(kind, user, app, isOn, btn) {
     var username = user.username;
     var appId = app.id;
     if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
-    var focusId = btn.getAttribute("data-focus");
     var key = currentKey();
     var req;
     if (kind === "system") {
@@ -470,6 +505,15 @@
         ? api("/admin/miniapps/" + encodeURIComponent(appId) + "/members/" + encodeURIComponent(username), { method: "DELETE", key: key })
         : api("/admin/miniapps/" + encodeURIComponent(appId) + "/members", { method: "POST", key: key, body: { username: username } });
     }
+    var what = kind === "system" ? "quyền hệ thống" : "thành viên";
+    return mutateCell(user, app, req, btn, (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + app.name + " cho " + user.display_name + ".");
+  }
+
+  // `miniapp`, not `app`: `app` is the page root used below to restore focus.
+  function mutateCell(user, miniapp, req, btn, okText) {
+    var username = user.username;
+    var appId = miniapp.id;
+    var focusId = btn.getAttribute("data-focus");
     beginMutation();
     btn.setAttribute("aria-disabled", "true");
     btn.setAttribute("aria-busy", "true");
@@ -477,14 +521,11 @@
       endMutation();
       var cellKey = username + "|" + appId;
       if (!r.ok) {
-        if (r.status === 401 || r.status === 403) return load("after");
-        state.cellError = { key: cellKey, text: L.errorText(r.data, { user: user.display_name, app: app.name }) };
+        if (r.status === 401 || (r.status === 403 && r.data && r.data.code === "ADMIN_REQUIRED")) return load("after");
+        state.cellError = { key: cellKey, text: L.errorText(r.data, { user: user.display_name, app: miniapp.name }) };
       } else {
         if (state.cellError && state.cellError.key === cellKey) state.cellError = null;
-        if (state.role === "admin") {
-          var what = kind === "system" ? "quyền hệ thống" : "thành viên";
-          notify("success", (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + app.name + " cho " + user.display_name + ".");
-        }
+        if (state.role === "admin") notify("success", okText);
       }
       state.dataSig = null; // force a repaint so the switch shows the server's truth
       return load("after").then(function () {

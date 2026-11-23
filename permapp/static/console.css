@@ -178,3 +178,11 @@
   .skeleton i, .shelf .skeleton-card { animation: none; }
   .switch__thumb, .key, .role, .cell, .app-card { transition: none; }
 }
+
+/* ---------- LMS: always visible, member role ---------- */
+.cell__note { display: inline-flex; align-items: baseline; gap: var(--space-2xs); min-height: 32px; padding-top: var(--space-2xs); font-size: var(--text-sm); color: var(--color-muted); }
+.role-field { display: grid; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink-2); }
+.role-select { min-height: 36px; padding: 0 var(--space-sm); border: var(--rule-hair) solid var(--color-muted); border-radius: var(--radius-input); background: var(--color-paper); color: var(--color-ink); font: 400 var(--text-sm)/1.2 var(--font-body); outline: 2px solid transparent; outline-offset: -3px; cursor: pointer; }
+.role-select:hover { background: var(--color-paper-2); }
+.role-select:focus-visible { outline-color: var(--color-focus); }
+.role-select[aria-busy="true"] { cursor: progress; opacity: 0.55; }

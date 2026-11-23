@@ -6,6 +6,7 @@ import functools
 import os
 
 from sqlalchemy import (
+    Boolean,
     Column,
     ForeignKey,
     MetaData,
@@ -42,6 +43,10 @@ miniapps = Table(
     Column("id", String(64), primary_key=True),
     Column("name", String(128), nullable=False),
     Column("description", String(512), nullable=False),
+    # Always visible: no system access (tier 1) needed, e.g. the mock LMS.
+    Column("always_visible", Boolean, nullable=True),
+    # Comma-separated member roles, e.g. "learner,instructor". "" = the miniapp has no roles.
+    Column("roles", String(256), nullable=True),
 )
 
 system_grants = Table(
@@ -56,6 +61,7 @@ miniapp_grants = Table(
     metadata,
     Column("username", String(64), ForeignKey("users.username"), primary_key=True),
     Column("miniapp_id", String(64), ForeignKey("miniapps.id"), primary_key=True),
+    Column("role", String(32), nullable=True),  # "" when the miniapp has no roles
 )
 
 SEED_USERS = [
@@ -68,9 +74,14 @@ SEED_USERS = [
 ]
 
 SEED_MINIAPPS = [
-    {"id": "leave", "name": "Nghỉ phép", "description": "Đăng ký và duyệt đơn nghỉ phép"},
-    {"id": "expense", "name": "Chi phí", "description": "Đề nghị thanh toán và quản lý chi phí"},
-    {"id": "inventory", "name": "Kho", "description": "Quản lý xuất nhập tồn kho"},
+    {"id": "leave", "name": "Nghỉ phép", "description": "Đăng ký và duyệt đơn nghỉ phép",
+     "always_visible": False, "roles": ""},
+    {"id": "expense", "name": "Chi phí", "description": "Đề nghị thanh toán và quản lý chi phí",
+     "always_visible": False, "roles": ""},
+    {"id": "inventory", "name": "Kho", "description": "Quản lý xuất nhập tồn kho",
+     "always_visible": False, "roles": ""},
+    {"id": "lms", "name": "LMS", "description": "Học tập trực tuyến (giả lập): học viên học khoá, giảng viên quản lý khoá học",
+     "always_visible": True, "roles": "learner,instructor"},
 ]
 
 
@@ -135,45 +146,62 @@ def _create_schema(engine):
         metadata.create_all(engine)
 
 
-def _ensure_email_column(engine):
-    """Databases created before emails existed (Neon) get the column added in place."""
-    if "email" in {c["name"] for c in inspect(engine).get_columns("users")}:
+# Columns added after the first deploy. Old databases (Neon) get them in place.
+LATE_COLUMNS = [
+    ("users", "email", "VARCHAR(254)"),
+    ("miniapps", "always_visible", "BOOLEAN"),
+    ("miniapps", "roles", "VARCHAR(256)"),
+    ("miniapp_grants", "role", "VARCHAR(32)"),
+]
+
+
+def _ensure_column(engine, table_name, column, sql_type):
+    """Add a column to an existing table if it is missing. Safe to run twice and concurrently."""
+    if column in {c["name"] for c in inspect(engine).get_columns(table_name)}:
         return
-    ddl = "ALTER TABLE users ADD COLUMN email VARCHAR(254)"
+    ddl = f"ALTER TABLE {table_name} ADD COLUMN {column} {sql_type}"
     if engine.dialect.name == "postgresql":
-        ddl = "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254)"
+        ddl = f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column} {sql_type}"
     try:
         with engine.begin() as c:
             c.execute(text(ddl))
     except DBAPIError:
         # A concurrent cold start may have added it first.
-        if "email" not in {c["name"] for c in inspect(engine).get_columns("users")}:
+        if column not in {c["name"] for c in inspect(engine).get_columns(table_name)}:
             raise
 
 
-def _backfill_seed_emails(engine):
+def _backfill(engine, table, key_col, seed_rows, columns):
+    """Fill seed values into columns that are still empty (NULL) on seeded rows."""
     with engine.begin() as c:
-        for row in SEED_USERS:
-            c.execute(
-                update(users)
-                .where(users.c.username == row["username"], users.c.email.is_(None))
-                .values(email=row["email"])
-            )
+        for row in seed_rows:
+            for col in columns:
+                c.execute(
+                    update(table)
+                    .where(key_col == row[key_col.name], table.c[col].is_(None))
+                    .values({col: row[col]})
+                )
 
 
 def init_db(engine):
     _create_schema(engine)
-    _ensure_email_column(engine)
+    for table_name, column, sql_type in LATE_COLUMNS:
+        _ensure_column(engine, table_name, column, sql_type)
     for row in _seed_users():
         _insert_if_absent(engine, users, users.c.username, row)
-    _backfill_seed_emails(engine)
     for row in SEED_MINIAPPS:
         _insert_if_absent(engine, miniapps, miniapps.c.id, row)
+    _backfill(engine, users, users.c.username, SEED_USERS, ["email"])
+    _backfill(engine, miniapps, miniapps.c.id, SEED_MINIAPPS, ["always_visible", "roles"])
+    with engine.begin() as c:  # memberships granted before roles existed have no role
+        c.execute(update(miniapp_grants).where(miniapp_grants.c.role.is_(None)).values(role=""))
 
 
 def reset_db(engine):
     """Remove every grant and restore seed users/miniapps to their seed values."""
     _create_schema(engine)
+    for table_name, column, sql_type in LATE_COLUMNS:
+        _ensure_column(engine, table_name, column, sql_type)
     with engine.begin() as c:
         c.execute(delete(miniapp_grants))
         c.execute(delete(system_grants))

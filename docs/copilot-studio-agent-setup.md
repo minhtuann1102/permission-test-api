@@ -55,6 +55,12 @@ có trong hệ thống thì API trả `404`, và agent dừng lại.
 | Nghỉ phép | `leave` |
 | Chi phí | `expense` |
 | Kho | `inventory` |
+| LMS (giả lập) | `lms` |
+
+**LMS giả lập** (`lms`) luôn hiển thị với mọi người (không cần tầng 1). Thành viên có vai trò:
+`learner` (Học viên) hoặc `instructor` (Giảng viên), truyền qua `role` của `AddMiniappMember`.
+Bỏ trống `role` thì là `learner`; gọi lại với vai trò khác thì đổi vai trò; vai trò sai trả
+`422 INVALID_ROLE`. `CheckAccess` trả thêm `role` để agent biết vai trò hiện tại.
 
 Sau này chuyển sang tài khoản Microsoft thật thì chỉ thay *nguồn* của email (lấy từ tài khoản
 người đang chat thay vì từ ticket); các bước còn lại giữ nguyên.
@@ -328,9 +334,9 @@ Mọi lỗi của API đều là JSON `{"detail": "...", "code": "..."}`. Agent 
 | `ListMiniapps` | `GET /admin/miniapps` | admin | id, tên, mô tả |
 | `GrantSystemAccess` | `POST /admin/system-access` body `{username, miniapp_id}` | admin | tầng 1 |
 | `RevokeSystemAccess` | `DELETE /admin/system-access/{username}/{miniapp_id}` | admin | gỡ cả 2 tầng |
-| `AddMiniappMember` | `POST /admin/miniapps/{miniapp_id}/members` body `{username}` | admin | tầng 2; 409 nếu thiếu tầng 1 |
+| `AddMiniappMember` | `POST /admin/miniapps/{miniapp_id}/members` body `{username, role}` | admin | tầng 2; 409 nếu thiếu tầng 1 (trừ `lms`); `role` cho `lms`: `learner` / `instructor`; 422 `INVALID_ROLE` |
 | `RemoveMiniappMember` | `DELETE /admin/miniapps/{miniapp_id}/members/{username}` | admin | gỡ tầng 2 |
-| `CheckAccess` | `GET /admin/check?username=&miniapp_id=` | admin | luôn 200: `visible`, `can_use` |
+| `CheckAccess` | `GET /admin/check?username=&miniapp_id=` | admin | luôn 200: `visible`, `can_use`, `role` |
 | `ResetAll` | `POST /admin/reset` | admin | xoá mọi quyền, khôi phục dữ liệu mẫu |
 
 ---

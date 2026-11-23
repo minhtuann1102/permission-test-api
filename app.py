@@ -96,6 +96,7 @@ class SystemAccessIn(BaseModel):
 
 class MemberIn(BaseModel):
     username: str
+    role: Optional[str] = ""  # member role for miniapps with roles (lms); blank = default role
 
 
 # ---------- public ----------
@@ -112,7 +113,8 @@ def swagger_json(request: Request):
         or request.headers.get("x-forwarded-host")
         or request.headers.get("host", "")
     )
-    return build_swagger(host)
+    # CORS only here, so a browser-based importer can fetch the spec. Never on /admin.
+    return JSONResponse(build_swagger(host), headers={"Access-Control-Allow-Origin": "*"})
 
 
 @app.get("/", include_in_schema=False)
@@ -126,14 +128,18 @@ def status_page(engine=Depends(db_engine)):
     people = service.list_users_with_grants(engine)
     head = "".join(f"<th>{html.escape(a['name'])}<br><small>{html.escape(a['id'])}</small></th>" for a in apps)
     rows = []
+    role_names = {"learner": "Học viên", "instructor": "Giảng viên"}
     for u in people:
         cells = []
+        roles = {r["miniapp_id"]: r["role"] for r in u.get("member_roles", [])}
         for a in apps:
             if u["role"] == "admin":
                 cell, cls = "admin", "all"
             elif a["id"] in u["memberships"]:
                 cell, cls = "dùng được", "use"
-            elif a["id"] in u["system_access"]:
+                if roles.get(a["id"]):
+                    cell += f"<br><small>{html.escape(role_names.get(roles[a['id']], roles[a['id']]))}</small>"
+            elif a["always_visible"] or a["id"] in u["system_access"]:
                 cell, cls = "chỉ thấy", "see"
             else:
                 cell, cls = "—", "none"
@@ -155,7 +161,8 @@ code{{background:#eef;padding:0 .3em}}
 </style></head><body>
 <h1>Permission Test API</h1>
 <p>Trạng thái quyền hiện tại. <b>chỉ thấy</b> = đã có quyền hệ thống (tầng 1);
-<b>dùng được</b> = đã là thành viên miniapp (tầng 2). Spec: <a href="/swagger.json"><code>/swagger.json</code></a></p>
+<b>dùng được</b> = đã là thành viên miniapp (tầng 2). LMS luôn hiển thị với mọi người,
+thành viên có vai trò Học viên hoặc Giảng viên. Spec: <a href="/swagger.json"><code>/swagger.json</code></a></p>
 <table><tr><th>Người dùng</th>{head}</tr>{''.join(rows)}</table>
 </body></html>"""
     return HTMLResponse(body)
@@ -211,7 +218,7 @@ def revoke_system_access(username: str, miniapp_id: str, _=Depends(require_admin
 
 @app.post("/admin/miniapps/{miniapp_id}/members")
 def add_member(miniapp_id: str, body: MemberIn, _=Depends(require_admin), engine=Depends(db_engine)):
-    return service.grant_membership(engine, miniapp_id, body.username)
+    return service.grant_membership(engine, miniapp_id, body.username, body.role)
 
 
 @app.delete("/admin/miniapps/{miniapp_id}/members/{username}")

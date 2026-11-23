@@ -129,3 +129,23 @@ test("errorText: SYSTEM_ACCESS_REQUIRED uses display names, in Vietnamese only",
 test("errorText: other errors keep the server detail", () => {
   assert.equal(L.errorText({ code: "INTERNAL_ERROR", detail: "Lỗi máy chủ: Boom" }, {}), "Lỗi máy chủ: Boom");
 });
+
+test("cellState: an always-visible miniapp is seen without system access", () => {
+  assert.equal(L.cellState(USERS[2], "lms", true), "see");
+  assert.equal(L.cellState({ system_access: [], memberships: ["lms"] }, "lms", true), "use");
+});
+
+test("memberRole and cellLabel show the LMS role in Vietnamese", () => {
+  const u = { member_roles: [{ miniapp_id: "lms", role: "instructor" }] };
+  assert.equal(L.memberRole(u, "lms"), "instructor");
+  assert.equal(L.memberRole(u, "leave"), "");
+  assert.equal(L.cellLabel("use", "instructor"), "Dùng được · Giảng viên");
+  assert.equal(L.cellLabel("see", ""), "Chỉ nhìn thấy");
+});
+
+test("adminSnapshot changes when only the LMS role changes", () => {
+  const apps = [{ id: "lms", always_visible: true }];
+  const before = L.adminSnapshot([{ username: "u", role: "user", memberships: ["lms"], member_roles: [{ miniapp_id: "lms", role: "learner" }] }], apps);
+  const after = L.adminSnapshot([{ username: "u", role: "user", memberships: ["lms"], member_roles: [{ miniapp_id: "lms", role: "instructor" }] }], apps);
+  assert.deepEqual(L.diffSnapshots(before, after), ["u|lms"]);
+});

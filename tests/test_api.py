@@ -3,19 +3,24 @@ import pytest
 from tests.conftest import ADMIN, U1
 
 
+def _granted(client, headers):
+    """Visible miniapps that needed a grant (the always-visible LMS is listed for everyone)."""
+    return [m for m in client.get("/me/miniapps", headers=headers).json()["miniapps"] if not m["always_visible"]]
+
+
 def test_end_to_end_flow(client):
-    assert client.get("/me/miniapps", headers=U1).json()["miniapps"] == []
+    assert _granted(client, U1) == []
     r = client.post("/admin/system-access", json={"username": "user1", "miniapp_id": "leave"}, headers=ADMIN)
     assert r.status_code == 200 and r.json()["already_granted"] is False
     ms = client.get("/me/miniapps", headers=U1).json()["miniapps"]
-    assert [(m["id"], m["can_use"]) for m in ms] == [("leave", False)]
+    assert [(m["id"], m["can_use"]) for m in ms] == [("leave", False), ("lms", False)]
     r = client.post("/miniapps/leave/use", headers=U1)
     assert r.status_code == 403 and r.json()["code"] == "NOT_MEMBER"
     assert client.post("/admin/miniapps/leave/members", json={"username": "user1"}, headers=ADMIN).status_code == 200
     assert client.post("/miniapps/leave/use", headers=U1).status_code == 200
-    assert client.get("/admin/check", params={"username": "user1", "miniapp_id": "leave"}, headers=ADMIN).json() == {"username": "user1", "miniapp_id": "leave", "visible": True, "can_use": True}
+    assert client.get("/admin/check", params={"username": "user1", "miniapp_id": "leave"}, headers=ADMIN).json() == {"username": "user1", "miniapp_id": "leave", "visible": True, "can_use": True, "role": ""}
     assert client.post("/admin/reset", headers=ADMIN).json() == {"reset": True}
-    assert client.get("/me/miniapps", headers=U1).json()["miniapps"] == []
+    assert _granted(client, U1) == []
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}])
@@ -51,7 +56,7 @@ def test_revoke_endpoints(client):
     client.post("/admin/miniapps/leave/members", json={"username": "user1"}, headers=ADMIN)
     assert client.delete("/admin/miniapps/leave/members/user1", headers=ADMIN).json()["revoked"] is True
     assert client.delete("/admin/system-access/user1/leave", headers=ADMIN).json()["revoked"] is True
-    assert client.get("/me/miniapps", headers=U1).json()["miniapps"] == []
+    assert _granted(client, U1) == []
 
 
 def test_public_pages(client):
@@ -113,3 +118,20 @@ def test_users_and_me_include_email(client):
     users = {u["username"]: u["email"] for u in client.get("/admin/users", headers=ADMIN).json()["users"]}
     assert users == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local"}
     assert client.get("/me", headers=U1).json()["email"] == "user1@demo.local"
+
+
+def test_lms_member_with_role_via_api(client):
+    r = client.post("/admin/miniapps/lms/members", json={"username": "user1", "role": "instructor"}, headers=ADMIN)
+    assert r.status_code == 200 and r.json() == {"username": "user1", "miniapp_id": "lms", "role": "instructor", "already_granted": False}
+    lms = next(m for m in client.get("/me/miniapps", headers=U1).json()["miniapps"] if m["id"] == "lms")
+    assert lms["can_use"] is True and lms["role"] == "instructor" and lms["roles"] == ["learner", "instructor"]
+    r = client.post("/admin/miniapps/lms/members", json={"username": "user1", "role": "boss"}, headers=ADMIN)
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_ROLE"
+    assert "Giảng viên" in client.get("/status").text
+
+
+def test_cors_only_on_swagger(client):
+    origin = {"Origin": "https://make.powerapps.com"}
+    assert client.get("/swagger.json", headers=origin).headers.get("access-control-allow-origin") == "*"
+    assert "access-control-allow-origin" not in client.get("/admin/users", headers={**ADMIN, **origin}).headers
+    assert "access-control-allow-origin" not in client.get("/health", headers=origin).headers
