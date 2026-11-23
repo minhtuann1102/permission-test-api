@@ -48,7 +48,8 @@ theme; none of its decorative devices do.
 - **Keys:** user keys are pre-filled. The first time Admin is chosen, the page asks for the admin
   key once and keeps it in browser storage, with a "Đổi admin key" action. A wrong key shows a
   clear error and asks again.
-- **Admin screen:** a users × miniapps table. Each cell has a status label (Không có quyền /
+- **Admin screen:** a users × miniapps table, rows = accounts with role `user` only (the admin
+  account returned by `/admin/users` is not listed). Each cell has a status label (Không có quyền /
   Chỉ nhìn thấy / Dùng được) and two switches: "Quyền hệ thống" and "Thành viên".
   The member switch is not disabled without system access: turning it on calls the API, and the
   409 message is shown as a notice, which demonstrates the rule. Revoking system access also
@@ -58,6 +59,14 @@ theme; none of its decorative devices do.
   A non-member gets a "Chờ admin thêm bạn vào" state. Miniapps without system access are not shown.
 - **Live refresh:** poll every ~3 s. A cell or card that changed since the last poll (e.g. by the
   agent) is briefly highlighted.
+- **Clicks vs polling:** while a request from the UI is in flight, polls are skipped; right after
+  each request (success or error) the UI refetches from the server instead of trusting its own
+  optimistic state, so a 409 puts the switch back off and a revoked system access also shows
+  membership off. Only changes the UI did not cause itself are highlighted.
+- **Visual rules (Hallmark Floor, differs from the earlier mockup):** no emoji icons for miniapps,
+  no uppercase letter-spaced table headers, no decorative "live" dot; the refresh indicator is
+  plain text. Fonts Familjen Grotesk + IBM Plex Sans both ship the Vietnamese subset (checked).
+  Theme stamped as a manual pick (`theme: cobalt (by request)`), not a dealt one.
 - **States:** every data region has loading, empty, error and full states.
 - **Language:** Vietnamese.
 
@@ -67,3 +76,10 @@ theme; none of its decorative devices do.
 - How the HTML/CSS/JS file is stored and served, as long as it ships in the Vercel bundle
   (verify on production after deploy).
 - Keep `/` and `/status` out of `swagger.json`; update tests and README for the route change.
+
+## Done means
+1. Tests pass; the page is exercised in a browser against local uvicorn (SQLite): switch roles,
+   trigger the 409, use a miniapp, reset.
+2. Deployed to production; the user enters the real admin key in the new UI and grants system
+   access, then membership, uses the miniapp as user1, then resets — and reports it worked.
+   (This also verifies the production admin write path, which is still untested.)
