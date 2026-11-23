@@ -205,7 +205,7 @@
     var head = h("div", { class: "head" }, [
       h("div", null, [
         h("h1", { text: "Miniapp của bạn" }),
-        h("p", { text: "Bạn đang xem với tài khoản " + me.display_name + " (" + me.username + "). Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
+        h("p", { text: "Bạn đang xem với tài khoản " + me.display_name + " (" + (me.email || me.username) + "). Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
       ]),
     ]);
     if (!apps.length) {
@@ -440,7 +440,7 @@
           ]),
         ]);
       });
-      return h("tr", null, [h("th", { scope: "row", class: "who" }, [h("b", { text: u.display_name }), h("span", { text: u.username })])].concat(cells));
+      return h("tr", null, [h("th", { scope: "row", class: "who" }, [h("b", { text: u.display_name }), h("span", { text: u.username }), u.email ? h("span", { class: "who__email", text: u.email }) : null])].concat(cells));
     });
 
     mount([
