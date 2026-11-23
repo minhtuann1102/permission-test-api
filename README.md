@@ -7,7 +7,16 @@ trong **Copilot Studio** tự động cấp quyền 2 tầng:
 2. **Thành viên miniapp** (tầng 2): admin thêm user vào miniapp → user *dùng được* miniapp.
    Phải có tầng 1 trước, nếu không API trả `409 SYSTEM_ACCESS_REQUIRED`.
 
-Base URL: `https://permission-test-api-jvd4.vercel.app`. Trang `/` hiển thị trạng thái quyền hiện tại.
+Base URL: `https://permission-test-api-jvd4.vercel.app`.
+
+## Giao diện demo
+
+- `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**.
+  - Admin: bảng người dùng × miniapp, mỗi ô có công tắc *Quyền hệ thống* (tầng 1) và *Thành viên* (tầng 2),
+    nút *Reset dữ liệu*. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
+  - user1 / user2: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
+  - Tự cập nhật mỗi 3 giây; ô nào vừa đổi do agent (hoặc nơi khác) sẽ được tô sáng.
+- `/status`: bảng trạng thái quyền chỉ đọc, không cần key.
 
 ## API key (header `X-API-Key`)
 
@@ -62,6 +71,7 @@ không lấy URL của từng deployment (những URL đó bị Deployment Prote
 py -3.11 -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt
 .venv/Scripts/python -m pytest -q                     # SQLite, không cần Postgres
+node --test "tests/*.test.cjs"                           # logic của giao diện (Node 18+)
 .venv/Scripts/python -m uvicorn app:app --reload      # http://127.0.0.1:8000
 ```
 

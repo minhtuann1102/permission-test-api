@@ -2,6 +2,7 @@
  * nav: top bar with a three-way account switcher · signature: the permission grid, users by miniapps, two switches per cell · states: loading, empty, error, full, key-required
  * axes: light/grotesk-sans/cool · posture: restrained · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, an admin table is a familiar shape; kept it familiar on purpose and put the two tiers in every cell so the rule is visible */
+/* Hallmark · dismissed render · the file-path render cannot resolve /static/ URLs, the served URL render at 127.0.0.1:8765 loads console.css and both faces */
 @import url("./tokens.css");
 @import url("./base.css");
 
@@ -10,6 +11,7 @@
   --control-h: 40px;
   --switch-w: 34px;
   --switch-h: 20px;
+  --shadow-thumb: 0 1px 2px oklch(21% 0.028 262 / 0.3);
   --color-state-use: var(--color-accent);
   --color-state-see: var(--color-ink-2);
   --color-state-none: var(--color-muted);
@@ -60,7 +62,7 @@
 .notice:empty { display: none; }
 .notice--error { background: var(--color-error-wash); border-color: color-mix(in oklab, var(--color-error) 35%, transparent); color: var(--color-ink); }
 .notice--success { background: var(--color-success-wash); border-color: color-mix(in oklab, var(--color-success) 35%, transparent); color: var(--color-ink); }
-.notice svg { flex: none; margin-top: 2px; }
+.notice svg { flex: none; margin-top: var(--space-3xs); }
 .notice--error svg { color: var(--color-error); }
 .notice--success svg { color: var(--color-success); }
 
@@ -79,7 +81,7 @@
 .cell { display: grid; gap: var(--space-xs); transition: background-color var(--dur-long) var(--ease-out); border-radius: var(--radius-input); padding: var(--space-2xs); margin: calc(-1 * var(--space-2xs)); }
 .cell.is-changed { background: var(--color-accent-wash); }
 
-.state { display: inline-flex; align-items: center; gap: 6px; font: 500 var(--text-sm)/1.2 var(--font-display); margin-bottom: var(--space-2xs); }
+.state { display: inline-flex; align-items: center; gap: var(--space-2xs); font: 500 var(--text-sm)/1.2 var(--font-display); margin-bottom: var(--space-2xs); }
 .state--use { color: var(--color-state-use); }
 .state--see { color: var(--color-state-see); }
 .state--none { color: var(--color-state-none); }
@@ -88,7 +90,7 @@
 .switch { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 32px; padding: 0 var(--space-2xs) 0 0; border: 0; background: transparent; color: var(--color-ink-2); font: 400 var(--text-sm)/1.2 var(--font-body); text-align: left; cursor: pointer; position: relative; border-radius: var(--radius-input); }
 .switch::before { content: ""; position: absolute; inset: -6px -4px; }
 .switch__track { flex: none; position: relative; width: var(--switch-w); height: var(--switch-h); border-radius: var(--radius-pill); background: var(--color-rule-2); transition: background-color var(--dur-micro) var(--ease-out); }
-.switch__thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--color-key-face); box-shadow: 0 1px 2px oklch(21% 0.028 262 / 0.3); transition: transform var(--dur-short) var(--ease-out); }
+.switch__thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--color-key-face); box-shadow: var(--shadow-thumb); transition: transform var(--dur-short) var(--ease-out); }
 .switch[aria-checked="true"] .switch__track { background: var(--color-accent); }
 .switch[aria-checked="true"] .switch__thumb { transform: translateX(14px); }
 .switch:hover .switch__track { background: var(--color-muted); }

@@ -10,3 +10,4 @@ local.db
 
 .vercel
 .env*
+.hallmark/
