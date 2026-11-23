@@ -1,5 +1,5 @@
 """Two-tier permission rules (system access -> miniapp membership). No HTTP here."""
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from permapp.db import miniapp_grants, miniapps, system_grants, users
@@ -17,7 +17,7 @@ class ServiceError(Exception):
 
 def _user_row(conn, username):
     row = conn.execute(
-        select(users.c.username, users.c.role, users.c.display_name).where(users.c.username == username)
+        select(users.c.username, users.c.role, users.c.display_name, users.c.email).where(users.c.username == username)
     ).mappings().first()
     if row is None:
         raise ServiceError(404, "USER_NOT_FOUND", f"Không tìm thấy người dùng '{username}'")
@@ -46,7 +46,7 @@ def get_user_by_key(engine, api_key):
         return None
     with engine.connect() as c:
         row = c.execute(
-            select(users.c.username, users.c.role, users.c.display_name).where(users.c.api_key == api_key)
+            select(users.c.username, users.c.role, users.c.display_name, users.c.email).where(users.c.api_key == api_key)
         ).mappings().first()
     return dict(row) if row else None
 
@@ -164,7 +164,7 @@ def use_miniapp(engine, username, miniapp_id):
 def list_users_with_grants(engine):
     with engine.connect() as c:
         rows = c.execute(
-            select(users.c.username, users.c.role, users.c.display_name).order_by(users.c.username)
+            select(users.c.username, users.c.role, users.c.display_name, users.c.email).order_by(users.c.username)
         ).mappings().all()
         sys_rows = c.execute(select(system_grants.c.username, system_grants.c.miniapp_id)).all()
         mem_rows = c.execute(select(miniapp_grants.c.username, miniapp_grants.c.miniapp_id)).all()
@@ -177,3 +177,17 @@ def list_users_with_grants(engine):
             memberships=sorted(m for (n, m) in mem_rows if n == u),
         ))
     return result
+
+
+def find_user_by_email(engine, email):
+    """Mock identity: resolve a requester email (e.g. from a ticket) to an account with its grants."""
+    wanted = (email or "").strip().lower()
+    if not wanted:
+        raise ServiceError(422, "VALIDATION_ERROR", "email: thiếu email cần tìm")
+    with engine.connect() as c:
+        row = c.execute(
+            select(users.c.username).where(func.lower(users.c.email) == wanted)
+        ).first()
+    if row is None:
+        raise ServiceError(404, "USER_NOT_FOUND", f"Không tìm thấy người dùng có email '{wanted}'")
+    return next(u for u in list_users_with_grants(engine) if u["username"] == row[0])

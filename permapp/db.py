@@ -13,7 +13,9 @@ from sqlalchemy import (
     Table,
     create_engine,
     delete,
+    inspect,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Engine
@@ -31,6 +33,7 @@ users = Table(
     Column("api_key", String(128), nullable=False, unique=True),
     Column("role", String(16), nullable=False),  # 'admin' | 'user'
     Column("display_name", String(128), nullable=False),
+    Column("email", String(254), nullable=True),  # mock identity; matched case-insensitively
 )
 
 miniapps = Table(
@@ -56,9 +59,12 @@ miniapp_grants = Table(
 )
 
 SEED_USERS = [
-    {"username": "admin", "api_key": None, "role": "admin", "display_name": "Quản trị viên"},
-    {"username": "user1", "api_key": "user1-key-123", "role": "user", "display_name": "Người dùng 1"},
-    {"username": "user2", "api_key": "user2-key-123", "role": "user", "display_name": "Người dùng 2"},
+    {"username": "admin", "api_key": None, "role": "admin", "display_name": "Quản trị viên",
+     "email": "admin@demo.local"},
+    {"username": "user1", "api_key": "user1-key-123", "role": "user", "display_name": "Người dùng 1",
+     "email": "user1@demo.local"},
+    {"username": "user2", "api_key": "user2-key-123", "role": "user", "display_name": "Người dùng 2",
+     "email": "user2@demo.local"},
 ]
 
 SEED_MINIAPPS = [
@@ -129,10 +135,38 @@ def _create_schema(engine):
         metadata.create_all(engine)
 
 
+def _ensure_email_column(engine):
+    """Databases created before emails existed (Neon) get the column added in place."""
+    if "email" in {c["name"] for c in inspect(engine).get_columns("users")}:
+        return
+    ddl = "ALTER TABLE users ADD COLUMN email VARCHAR(254)"
+    if engine.dialect.name == "postgresql":
+        ddl = "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254)"
+    try:
+        with engine.begin() as c:
+            c.execute(text(ddl))
+    except DBAPIError:
+        # A concurrent cold start may have added it first.
+        if "email" not in {c["name"] for c in inspect(engine).get_columns("users")}:
+            raise
+
+
+def _backfill_seed_emails(engine):
+    with engine.begin() as c:
+        for row in SEED_USERS:
+            c.execute(
+                update(users)
+                .where(users.c.username == row["username"], users.c.email.is_(None))
+                .values(email=row["email"])
+            )
+
+
 def init_db(engine):
     _create_schema(engine)
+    _ensure_email_column(engine)
     for row in _seed_users():
         _insert_if_absent(engine, users, users.c.username, row)
+    _backfill_seed_emails(engine)
     for row in SEED_MINIAPPS:
         _insert_if_absent(engine, miniapps, miniapps.c.id, row)
 

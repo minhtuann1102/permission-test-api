@@ -82,3 +82,34 @@ def test_unhandled_error_is_json(client, monkeypatch):
     with TestClient(app_module.app, raise_server_exceptions=False) as c:
         r = c.get("/admin/miniapps", headers=ADMIN)
     assert r.status_code == 500 and r.json()["code"] == "INTERNAL_ERROR"
+
+
+def test_find_user_by_email(client):
+    client.post("/admin/system-access", json={"username": "user1", "miniapp_id": "leave"}, headers=ADMIN)
+    r = client.get("/admin/users/by-email", params={"email": "  USER1@Demo.Local "}, headers=ADMIN)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "user1" and body["email"] == "user1@demo.local"
+    assert body["system_access"] == ["leave"] and body["memberships"] == []
+
+
+def test_find_user_by_email_unknown_is_404(client):
+    r = client.get("/admin/users/by-email", params={"email": "nobody@demo.local"}, headers=ADMIN)
+    assert r.status_code == 404 and r.json()["code"] == "USER_NOT_FOUND"
+
+
+def test_find_user_by_email_blank_is_422(client):
+    r = client.get("/admin/users/by-email", params={"email": "   "}, headers=ADMIN)
+    assert r.status_code == 422 and r.json()["code"] == "VALIDATION_ERROR"
+    assert client.get("/admin/users/by-email", headers=ADMIN).status_code == 422
+
+
+def test_find_user_by_email_needs_admin(client):
+    r = client.get("/admin/users/by-email", params={"email": "user1@demo.local"}, headers=U1)
+    assert r.status_code == 403 and r.json()["code"] == "ADMIN_REQUIRED"
+
+
+def test_users_and_me_include_email(client):
+    users = {u["username"]: u["email"] for u in client.get("/admin/users", headers=ADMIN).json()["users"]}
+    assert users == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local"}
+    assert client.get("/me", headers=U1).json()["email"] == "user1@demo.local"

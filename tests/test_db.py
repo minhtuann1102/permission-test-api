@@ -50,3 +50,38 @@ def test_postgres_engine_is_pgbouncer_safe(monkeypatch):
     db.make_engine("postgresql+psycopg://u:p@h/db?sslmode=require")
     assert seen["poolclass"] is NullPool
     assert seen["connect_args"] == {"prepare_threshold": None}  # PgBouncer transaction mode
+
+
+def test_seed_users_have_emails(engine):
+    with engine.connect() as c:
+        emails = dict(c.execute(select(users.c.username, users.c.email)).all())
+    assert emails == {"admin": "admin@demo.local", "user1": "user1@demo.local", "user2": "user2@demo.local"}
+
+
+def test_init_db_adds_email_column_to_an_old_users_table(tmp_path):
+    from sqlalchemy import text
+
+    from permapp.db import make_engine
+
+    eng = make_engine(f"sqlite:///{tmp_path}/old.db")
+    with eng.begin() as c:  # the schema before emails existed, already seeded
+        c.execute(text("CREATE TABLE users (username VARCHAR(64) PRIMARY KEY, api_key VARCHAR(128) NOT NULL UNIQUE, "
+                       "role VARCHAR(16) NOT NULL, display_name VARCHAR(128) NOT NULL)"))
+        c.execute(text("INSERT INTO users VALUES ('user1', 'user1-key-123', 'user', 'Người dùng 1')"))
+    init_db(eng)
+    init_db(eng)  # idempotent
+    with eng.connect() as c:
+        emails = dict(c.execute(select(users.c.username, users.c.email)).all())
+    eng.dispose()
+    assert emails["user1"] == "user1@demo.local"
+    assert emails["user2"] == "user2@demo.local"
+
+
+def test_reset_restores_seed_email(engine):
+    from sqlalchemy import update
+
+    with engine.begin() as c:
+        c.execute(update(users).where(users.c.username == "user1").values(email="changed@x.y"))
+    reset_db(engine)
+    with engine.connect() as c:
+        assert c.execute(select(users.c.email).where(users.c.username == "user1")).scalar() == "user1@demo.local"

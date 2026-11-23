@@ -37,6 +37,7 @@ DEFINITIONS = {
             "username": _str("Username, e.g. 'user1'."),
             "role": _str("'admin' or 'user'."),
             "display_name": _str("Display name."),
+            "email": _str("Email used as the (mock) identity, e.g. 'user1@demo.local'."),
         },
     },
     "Miniapp": {
@@ -70,6 +71,7 @@ DEFINITIONS = {
             "username": _str("Username."),
             "role": _str("'admin' or 'user'."),
             "display_name": _str("Display name."),
+            "email": _str("Email used as the (mock) identity, e.g. 'user1@demo.local'."),
             "system_access": {"type": "array", "items": {"type": "string"},
                               "description": "Miniapp ids this user has system access to (tier 1)."},
             "memberships": {"type": "array", "items": {"type": "string"},
@@ -230,6 +232,20 @@ def _paths():
                 "(system_access) and the miniapps they are members of (memberships). Use to look up valid "
                 "usernames or review current permissions.",
                 [ADMIN_KEY_PARAM], "UserList", "All users with their grants.", ADMIN_ERRORS,
+            )
+        },
+        "/admin/users/by-email": {
+            "get": _op(
+                "FindUserByEmail", "Find a user by email",
+                "Admin only (admin key). Resolves a requester's email (for example the requester of a "
+                "ticket) to their account: username, display name, email and current permissions "
+                "(system_access, memberships). Case-insensitive. Use this FIRST when a request names a "
+                "person by email, then use the returned username in the other operations. Unknown email "
+                "returns 404 USER_NOT_FOUND: do not guess a username.",
+                [ADMIN_KEY_PARAM, _query("email", "Requester email, e.g. 'user1@demo.local'.")],
+                "UserWithGrants", "The user with this email and their permissions.",
+                {**ADMIN_ERRORS, "404": _err("No user has this email (USER_NOT_FOUND)."),
+                 "422": _err("The email parameter is missing or blank (VALIDATION_ERROR).")},
             )
         },
         "/admin/miniapps": {

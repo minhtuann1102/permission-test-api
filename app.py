@@ -185,6 +185,15 @@ def admin_users(_=Depends(require_admin), engine=Depends(db_engine)):
     return {"users": service.list_users_with_grants(engine)}
 
 
+@app.get("/admin/users/by-email")
+def admin_user_by_email(
+    email: Optional[str] = Query(None),
+    _=Depends(require_admin),
+    engine=Depends(db_engine),
+):
+    return service.find_user_by_email(engine, email)
+
+
 @app.get("/admin/miniapps")
 def admin_miniapps(_=Depends(require_admin), engine=Depends(db_engine)):
     return {"miniapps": service.list_miniapps(engine)}
