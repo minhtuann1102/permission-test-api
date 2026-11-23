@@ -21,7 +21,8 @@
     seq: 0,
     lastMutationStartSeq: 0,
     inFlight: 0,
-    loading: false,
+    polling: false,
+    latestLoadSeq: 0,
     data: null,
     dataSig: null,
     snapshot: null,
@@ -269,24 +270,25 @@
     });
   }
 
+  function invalidateLoads() { state.latestLoadSeq = nextSeq(); }
+
   function load(kind) {
     var role = state.role;
-    if (kind !== "poll") state.loading = true;
     if (kind === "initial") renderLoading();
     var key = currentKey();
     if (role === "admin" && !key) {
-      state.loading = false;
+      invalidateLoads();
       state.view = "key";
       state.data = null;
       render();
       return Promise.resolve();
     }
     var seq = nextSeq();
+    state.latestLoadSeq = seq;
     var req = role === "admin" ? fetchAdmin(key) : fetchUser(key);
     return req.then(function (res) {
       if (role !== state.role) return;
-      if (kind === "poll" && !L.shouldApplyPoll(seq, state.lastMutationStartSeq)) return;
-      state.loading = false;
+      if (!L.shouldApplyLoad(seq, state.latestLoadSeq, state.lastMutationStartSeq, state.inFlight)) return;
       if (!res.ok) {
         if (role === "admin" && (res.status === 401 || res.status === 403)) {
           store.remove(K_ADMIN);
@@ -295,7 +297,7 @@
           render();
           return;
         }
-        if (kind === "poll" && state.data) { setSync(false); return; }
+        if (kind !== "initial" && state.data) { setSync(false); return; }
         setSync(false);
         state.data = null;
         renderError(res.detail);
@@ -323,6 +325,7 @@
     state.snapshot = null;
     state.notice = null;
     state.view = null;
+    invalidateLoads();
     state.keyError = null;
     state.changingKey = false;
     state.confirmReset = false;
@@ -332,9 +335,10 @@
   }
 
   function poll() {
-    if (document.hidden || state.inFlight > 0 || state.loading || state.view === "key") return;
-    state.loading = true;
-    load("poll").then(function () { state.loading = false; }, function () { state.loading = false; });
+    if (document.hidden || state.inFlight > 0 || state.polling || state.view === "key") return;
+    state.polling = true;
+    var done = function () { state.polling = false; };
+    load("poll").then(done, done);
   }
 
   // ---------- admin ----------
@@ -453,6 +457,8 @@
       }
       state.dataSig = null; // force a repaint so the switch shows the server's truth
       return load("after").then(function () {
+        // Only restore focus if the repaint dropped it; never pull it off another control.
+        if (document.activeElement && document.activeElement !== document.body) return;
         var again = app.querySelector('[data-focus="' + focusId + '"]');
         if (again) again.focus();
       });
@@ -499,6 +505,7 @@
   }
 
   function changeKey() {
+    invalidateLoads();
     state.view = "key";
     state.keyError = null;
     state.changingKey = true;

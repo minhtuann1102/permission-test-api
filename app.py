@@ -230,4 +230,5 @@ def admin_reset(_=Depends(require_admin), engine=Depends(db_engine)):
     return {"reset": True}
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# check_dir=False: if the folder were missing from a deploy, only the UI breaks, never the API.
+app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")

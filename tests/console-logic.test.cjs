@@ -91,3 +91,20 @@ test("safeStore uses real storage when it works", () => {
 test("STATE_LABEL has the exact Vietnamese labels", () => {
   assert.deepEqual(L.STATE_LABEL, { none: "Không có quyền", see: "Chỉ nhìn thấy", use: "Dùng được" });
 });
+
+test("shouldApplyLoad: the latest load applies when nothing is in flight", () => {
+  assert.equal(L.shouldApplyLoad(7, 7, 6, 0), true);
+});
+
+test("shouldApplyLoad: an older load is discarded when a newer one started", () => {
+  assert.equal(L.shouldApplyLoad(7, 8, 6, 0), false);
+});
+
+test("shouldApplyLoad: a refetch landing while another click is in flight is discarded", () => {
+  // click A (seq 5), click B (seq 6), A's refetch (seq 7) returns while B is still running
+  assert.equal(L.shouldApplyLoad(7, 7, 6, 1), false);
+});
+
+test("shouldApplyLoad: a load started before the last click is discarded", () => {
+  assert.equal(L.shouldApplyLoad(5, 5, 6, 0), false);
+});

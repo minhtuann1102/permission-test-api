@@ -46,6 +46,12 @@
     return pollSeq > lastMutationStartSeq;
   }
 
+  // A load result is applied only if it is the most recently started load, it started after the
+  // last click began, and no click is still running (that click's own refetch will repaint).
+  function shouldApplyLoad(seq, latestLoadSeq, lastMutationStartSeq, inFlight) {
+    return seq === latestLoadSeq && seq > lastMutationStartSeq && inFlight === 0;
+  }
+
   function safeStore(storage) {
     var memory = {};
     function attempt(fn, fallback) {
@@ -81,6 +87,7 @@
     userSnapshot: userSnapshot,
     diffSnapshots: diffSnapshots,
     shouldApplyPoll: shouldApplyPoll,
+    shouldApplyLoad: shouldApplyLoad,
     safeStore: safeStore,
   };
   root.ConsoleLogic = api;

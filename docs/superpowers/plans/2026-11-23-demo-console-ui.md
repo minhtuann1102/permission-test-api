@@ -135,6 +135,6 @@ In `tests/test_swagger.py` add `"/status"` to `EXCLUDED`, and add `test_ui_route
 
 ### Task 6: Deploy and production check
 
-- [ ] **Step 1:** Push `main`; `npx vercel --prod --yes`.
+- [ ] **Step 1:** Preview deploy first: `npx vercel --yes`; curl the preview URL for `/health`, `/`, `/static/console.js`, `/static/console.css` (preview URLs may need Deployment Protection bypass; if blocked, inspect `npx vercel build` output for `permapp/static`). Then, with the user's go-ahead, merge to `main`, push, `npx vercel --prod --yes`.
 - [ ] **Step 2:** `curl -s -o /dev/null -w "%{http_code} %{content_type}\n"` on `/`, `/status`, `/static/console.js`, `/static/console.css` of `https://permission-test-api-jvd4.vercel.app` — Expected: `200` each with html/js/css types (proves the static files ship in the Vercel bundle).
 - [ ] **Step 3:** The user opens the production URL, enters the real admin key, grants system access then membership for user1/leave, opens the miniapp as user1, then resets — and reports the result. Not done until they confirm.
