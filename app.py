@@ -241,7 +241,7 @@ def admin_check(
     try:
         return service.check_access(engine, username, miniapp_id)
     except ServiceError:
-        return {"username": username, "miniapp_id": miniapp_id, "visible": False, "can_use": False}
+        return {"username": username, "miniapp_id": miniapp_id, "visible": False, "can_use": False, "role": ""}
 
 
 @app.get("/admin/eligibility")

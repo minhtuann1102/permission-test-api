@@ -208,3 +208,9 @@ def test_user_fields_include_org_data(client):
     assert admin["manager_email"] == ""  # never null
     assert client.get("/me", headers={"X-API-Key": "user3-key-123"}).json()["username"] == "user3"
     assert "Đã nghỉ việc" in client.get("/status").text and "Phòng Kinh doanh" in client.get("/status").text
+
+
+def test_check_access_unknown_ids_keep_the_full_shape(client):
+    r = client.get("/admin/check", params={"username": "ghost", "miniapp_id": "lms"}, headers=ADMIN)
+    assert r.status_code == 200
+    assert r.json() == {"username": "ghost", "miniapp_id": "lms", "visible": False, "can_use": False, "role": ""}
