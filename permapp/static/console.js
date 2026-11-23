@@ -5,7 +5,6 @@
   var L = window.ConsoleLogic;
   var POLL_MS = 3000;
   var USER_KEYS = { user1: "user1-key-123", user2: "user2-key-123" };
-  var ROLES = ["admin", "user1", "user2"];
   var K_ROLE = "permconsole.role";
   var K_ADMIN = "permconsole.adminKey";
 
@@ -15,9 +14,10 @@
 
   var app = document.getElementById("app");
   var syncEl = document.getElementById("sync");
+  var syncLive = document.getElementById("sync-live");
 
   var state = {
-    role: ROLES.indexOf(store.get(K_ROLE)) !== -1 ? store.get(K_ROLE) : "user1",
+    role: L.pickRole(window.location.search, store.get(K_ROLE)),
     seq: 0,
     lastMutationStartSeq: 0,
     inFlight: 0,
@@ -29,6 +29,8 @@
     notice: null,
     noticeTimer: null,
     view: null,
+    syncOk: null,
+    cellError: null,
   };
 
   // ---------- small DOM helpers ----------
@@ -128,6 +130,10 @@
   }
 
   function setSync(ok) {
+    if (ok !== state.syncOk) {
+      state.syncOk = ok;
+      syncLive.textContent = ok ? "Đã cập nhật lại dữ liệu." : "Không cập nhật được dữ liệu, đang thử lại.";
+    }
     if (ok) {
       var t = new Date();
       var pad = function (n) { return (n < 10 ? "0" : "") + n; };
@@ -171,7 +177,8 @@
     if (state.role === "admin") {
       mount([
         h("div", { class: "head" }, [h("div", null, [h("h1", { text: "Phân quyền miniapp" })])]),
-        h("div", { class: "skeleton", "aria-busy": "true", "aria-label": "Đang tải" }, [h("i"), h("i"), h("i")]),
+        h("div", { class: "skeleton skeleton--grid", "aria-busy": "true", "aria-label": "Đang tải" },
+          [0, 1, 2].map(function (r) { return h("div", { class: r === 0 ? "skeleton__head" : "skeleton__row" }, [h("i"), h("i"), h("i"), h("i")]); })),
       ]);
     } else {
       mount([
@@ -197,8 +204,8 @@
     var apps = state.data.miniapps;
     var head = h("div", { class: "head" }, [
       h("div", null, [
-        h("h1", { text: "Xin chào, " + me.display_name }),
-        h("p", { text: "Các miniapp tài khoản " + me.username + " đang nhìn thấy. Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
+        h("h1", { text: "Miniapp của bạn" }),
+        h("p", { text: "Bạn đang xem với tài khoản " + me.display_name + " (" + me.username + "). Miniapp chưa được cấp quyền hệ thống sẽ không hiện ở đây." }),
       ]),
     ]);
     if (!apps.length) {
@@ -247,15 +254,16 @@
   // ---------- actions ----------
 
   function useMiniapp(a, btn, result) {
+    if (btn.getAttribute("aria-busy") === "true") return;
     beginMutation();
     btn.setAttribute("aria-busy", "true");
-    btn.disabled = true;
+    btn.setAttribute("aria-disabled", "true");
     api("/miniapps/" + encodeURIComponent(a.id) + "/use", { method: "POST", key: currentKey() }).then(function (r) {
       endMutation();
       btn.removeAttribute("aria-busy");
-      btn.disabled = false;
+      btn.removeAttribute("aria-disabled");
       result.className = "app-card__result " + (r.ok ? "is-ok" : "is-err");
-      result.textContent = r.ok ? r.data.message : r.data.detail;
+      result.textContent = r.ok ? "Bạn đã mở " + a.name + " thành công." : L.errorText(r.data, {});
       load("after");
     });
   }
@@ -316,10 +324,20 @@
     });
   }
 
-  function switchRole(role) {
+  function writeUrl(role, push) {
+    try {
+      var url = window.location.pathname + "?as=" + role;
+      if (push) window.history.pushState({ as: role }, "", url);
+      else window.history.replaceState({ as: role }, "", url);
+    } catch (e) { /* history unavailable: the view still works */ }
+  }
+
+  function switchRole(role, fromHistory) {
     if (role === state.role) return;
     state.role = role;
     store.set(K_ROLE, role);
+    if (!fromHistory) writeUrl(role, true);
+    state.cellError = null;
     state.data = null;
     state.dataSig = null;
     state.snapshot = null;
@@ -353,18 +371,22 @@
     });
   }
 
-  function switchButton(kind, user, appId, on, label) {
-    var id = kind + "|" + user.username + "|" + appId;
+  function switchButton(kind, user, app, on, label, step, waiting) {
+    var id = kind + "|" + user.username + "|" + app.id;
     return h("button", {
       type: "button",
-      class: "switch",
+      class: "switch" + (waiting ? " switch--waiting" : ""),
       role: "switch",
       "aria-checked": on ? "true" : "false",
       "data-focus": id,
-      onclick: function (ev) { toggle(kind, user.username, appId, on, ev.currentTarget); },
+      onclick: function (ev) { toggle(kind, user, app, on, ev.currentTarget); },
     }, [
       h("span", { class: "switch__track", "aria-hidden": "true" }, [h("span", { class: "switch__thumb" })]),
-      h("span", { text: label }),
+      h("span", { class: "switch__label" }, [
+        h("span", { class: "switch__step", "aria-hidden": "true", text: step + "." }),
+        h("span", { text: label }),
+        waiting ? h("span", { class: "switch__hint", text: "cần bước 1" }) : null,
+      ]),
     ]);
   }
 
@@ -410,8 +432,11 @@
         return h("td", { "data-label": m.name }, [
           h("div", { class: "cell" + (highlight.indexOf(key) !== -1 ? " is-changed" : "") }, [
             h("p", { class: "state state--" + st }, [icon(st), L.STATE_LABEL[st]]),
-            switchButton("system", u, m.id, sees, "Quyền hệ thống"),
-            switchButton("member", u, m.id, member, "Thành viên"),
+            switchButton("system", u, m, sees, "Quyền hệ thống", 1, false),
+            switchButton("member", u, m, member, "Thành viên", 2, !sees),
+            state.cellError && state.cellError.key === key
+              ? h("p", { class: "cell__error", role: "alert" }, [icon("error"), h("span", { text: state.cellError.text })])
+              : null,
           ]),
         ]);
       });
@@ -429,7 +454,9 @@
     ]);
   }
 
-  function toggle(kind, username, appId, isOn, btn) {
+  function toggle(kind, user, app, isOn, btn) {
+    var username = user.username;
+    var appId = app.id;
     if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
     var focusId = btn.getAttribute("data-focus");
     var key = currentKey();
@@ -448,12 +475,16 @@
     btn.setAttribute("aria-busy", "true");
     return req.then(function (r) {
       endMutation();
+      var cellKey = username + "|" + appId;
       if (!r.ok) {
         if (r.status === 401 || r.status === 403) return load("after");
-        notify("error", r.data.detail);
+        state.cellError = { key: cellKey, text: L.errorText(r.data, { user: user.display_name, app: app.name }) };
       } else {
-        var what = kind === "system" ? "quyền hệ thống" : "thành viên";
-        notify("success", (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + appId + " cho " + username + ".");
+        if (state.cellError && state.cellError.key === cellKey) state.cellError = null;
+        if (state.role === "admin") {
+          var what = kind === "system" ? "quyền hệ thống" : "thành viên";
+          notify("success", (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + app.name + " cho " + user.display_name + ".");
+        }
       }
       state.dataSig = null; // force a repaint so the switch shows the server's truth
       return load("after").then(function () {
@@ -577,6 +608,11 @@
     var b = ev.target.closest(".role");
     if (b) switchRole(b.getAttribute("data-role"));
   });
+  window.addEventListener("popstate", function () {
+    switchRole(L.pickRole(window.location.search, store.get(K_ROLE)), true);
+  });
+  store.set(K_ROLE, state.role);
+  writeUrl(state.role, false);
   paintRoles();
   load("initial");
   setInterval(poll, POLL_MS);

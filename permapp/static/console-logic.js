@@ -52,6 +52,25 @@
     return seq === latestLoadSeq && seq > lastMutationStartSeq && inFlight === 0;
   }
 
+  var ROLES = ["admin", "user1", "user2"];
+
+  // ?as=<role> in the URL wins, then the remembered role, then the admin view.
+  function pickRole(search, stored) {
+    var m = /[?&]as=([^&]*)/.exec(search || "");
+    var fromUrl = m ? decodeURIComponent(m[1]) : null;
+    if (ROLES.indexOf(fromUrl) !== -1) return fromUrl;
+    if (ROLES.indexOf(stored) !== -1) return stored;
+    return "admin";
+  }
+
+  // Server errors in the page's own words; ctx carries display names ({user, app}).
+  function errorText(data, ctx) {
+    if (data && data.code === "SYSTEM_ACCESS_REQUIRED" && ctx && ctx.user && ctx.app) {
+      return ctx.user + " chưa có quyền hệ thống với " + ctx.app + ". Bật Quyền hệ thống trước, rồi mới thêm làm thành viên.";
+    }
+    return (data && data.detail) || "Có lỗi xảy ra";
+  }
+
   function safeStore(storage) {
     var memory = {};
     function attempt(fn, fallback) {
@@ -88,6 +107,8 @@
     diffSnapshots: diffSnapshots,
     shouldApplyPoll: shouldApplyPoll,
     shouldApplyLoad: shouldApplyLoad,
+    pickRole: pickRole,
+    errorText: errorText,
     safeStore: safeStore,
   };
   root.ConsoleLogic = api;

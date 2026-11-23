@@ -108,3 +108,24 @@ test("shouldApplyLoad: a refetch landing while another click is in flight is dis
 test("shouldApplyLoad: a load started before the last click is discarded", () => {
   assert.equal(L.shouldApplyLoad(5, 5, 6, 0), false);
 });
+
+test("pickRole: ?as= in the URL wins", () => {
+  assert.equal(L.pickRole("?as=user2", "user1"), "user2");
+});
+
+test("pickRole: falls back to the stored role, then admin", () => {
+  assert.equal(L.pickRole("", "user1"), "user1");
+  assert.equal(L.pickRole("?as=nobody", null), "admin");
+  assert.equal(L.pickRole("", "garbage"), "admin");
+});
+
+test("errorText: SYSTEM_ACCESS_REQUIRED uses display names, in Vietnamese only", () => {
+  assert.equal(
+    L.errorText({ code: "SYSTEM_ACCESS_REQUIRED", detail: "'user1' chưa ... (system access) trước." }, { user: "Người dùng 1", app: "Nghỉ phép" }),
+    "Người dùng 1 chưa có quyền hệ thống với Nghỉ phép. Bật Quyền hệ thống trước, rồi mới thêm làm thành viên.",
+  );
+});
+
+test("errorText: other errors keep the server detail", () => {
+  assert.equal(L.errorText({ code: "INTERNAL_ERROR", detail: "Lỗi máy chủ: Boom" }, {}), "Lỗi máy chủ: Boom");
+});
