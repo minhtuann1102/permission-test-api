@@ -1,0 +1,5 @@
+.venv
+tests
+local.db
+docs
+.superpowers
