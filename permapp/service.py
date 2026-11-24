@@ -238,7 +238,7 @@ def _label(level):
 def _detail(action, username, app, before, after):
     name = app["name"]
     if action == "ChangeRole":
-        return f"Đổi vai trò {name} của {username}: {_label(before)} → {_label(after)}"
+        return f"Đổi vai trò {name} của {username}"
     if action == "RevokeUse":
         return f"Thu hồi quyền dùng {name} của {username}"
     if action == "RevokeAll":
