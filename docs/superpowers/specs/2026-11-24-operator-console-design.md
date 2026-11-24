@@ -115,8 +115,11 @@ currently requires one.
 - **Quyền cần cấp**: a multi-select dropdown grouped by miniapp (Xem / Sử dụng; LMS: Học viên /
   Giảng viên). Options the user already has, or (for Xem) covered by Sử dụng, are shown disabled
   with "(đang có)". At most one LMS role can be picked at a time. Chosen items appear as removable chips in the field.
-- **Cấp N quyền** button (disabled at 0). No separate confirm dialog: the button label states the
-  count and the selection is visible. Results render below: ✓ with before → after, or ✕ with the
+- **Cấp N quyền** button (disabled at 0) opens a **confirm dialog** (user-decided): user name and
+  email, then one line per selected permission with before → after (e.g. *Kho: Xem → Sử dụng*,
+  *LMS: Học viên → Giảng viên*) and an eligibility pre-check from `GET /admin/eligibility`
+  (✓ basis, or ✕ reason; refused items are still sent, the server decides). Buttons *Huỷ* /
+  *Xác nhận cấp N quyền*. Results render below after confirm: ✓ with before → after, or ✕ with the
   service's Vietnamese reason. The selection clears on success items, keeps refused items.
 - Section-level **Reset dữ liệu** stays (with its existing confirm).
 - The old grid is removed from `/`. `/status` stays as the read-only overview.
@@ -169,7 +172,8 @@ Tab **Kỳ đánh giá**
 ## Calls made by the designer (not discussed with the user)
 - Refused attempts are not logged (log = changes only).
 - Actor via `X-Client: console` header; anything else counts as Agent.
-- Multi-grant: no extra confirm dialog; one refusal doesn't undo other items.
+- Multi-grant: one refusal doesn't undo other items. The confirm dialog shows an eligibility
+  pre-check per item.
 - Grid removed from `/`; `/status` stays as the overview.
 - Disabled-with-reason action buttons on the Đánh giá screen; HQCV upload by pasting rows.
 - Review API ignores a stray `ticket` so the deployed agent keeps working.
