@@ -57,11 +57,21 @@ def test_admin_only(client):
     _err(client.delete(f"{R}/goals/G-1001-3", params={"ticket": "#1"}, headers=U1), 403, "ADMIN_REQUIRED")
 
 
-def test_every_write_needs_a_ticket(client):
-    _err(client.delete(f"{R}/goals/G-1001-3", headers=ADMIN), 422, "TICKET_REQUIRED")
-    _err(client.post(f"{R}/periods/VINFAST-Q4-2026/extend", json={"deadline": "2026-12-05", "ticket": "abc"},
-                     headers=ADMIN), 422, "TICKET_REQUIRED")
-    assert len(_form(client, "RF-1001")["goals"]) == 3
+def test_writes_need_no_ticket(client):
+    """Real systems know nothing about SDP tickets; an old agent still sending one is not refused."""
+    r = client.delete(f"{R}/goals/G-1001-3", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["result"] == "DONE"
+    r = client.post(f"{R}/periods/VINFAST-Q4-2026/extend", json={"deadline": "2026-12-05", "ticket": "abc"}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["result"] == "DONE"
+    assert all("ticket" not in e for e in client.get(f"{R}/log", headers=ADMIN).json()["entries"])
+
+
+def test_review_actor_from_header(client):
+    client.post(f"{R}/periods/VINFAST-Q4-2026/extend", json={"deadline": "2026-12-05"},
+                headers={**ADMIN, "X-Client": "console"})
+    client.delete(f"{R}/goals/G-1001-3", headers=ADMIN)
+    log = client.get(f"{R}/log", headers=ADMIN).json()["entries"]
+    assert [(e["action"], e["actor"]) for e in log] == [("DeleteReviewGoal", "agent"), ("ExtendReviewPeriod", "console")]
 
 
 # ---------- Tạo / mở lại / gia hạn kỳ ----------
@@ -219,8 +229,8 @@ def test_delete_wrong_contract_criteria(client):
         assert client.delete(f"{R}/goals/{gid}", params={"ticket": "#92"}, headers=ADMIN).status_code == 200
     f = _form(client, "RF-1005")
     assert [g["id"] for g in f["goals"]] == ["G-1005-1", "G-1005-2"] and f["total_weight"] == 70
-    log = client.get(f"{R}/log", params={"ticket": "92"}, headers=ADMIN).json()["entries"]
-    assert [e["target"] for e in log] == ["G-1005-4", "G-1005-3"] and all(e["ticket"] == "#92" for e in log)
+    log = client.get(f"{R}/log", params={"target": "G-1005-4"}, headers=ADMIN).json()["entries"]
+    assert [e["target"] for e in log] == ["G-1005-4"] and log[0]["actor"] == "agent" and "ticket" not in log[0]
 
 
 def test_extend_probation_form(client):
@@ -301,7 +311,7 @@ def test_init_twice_and_reset_keep_one_seed(engine):
 def test_reviews_page(client):
     client.delete(f"{R}/goals/G-1001-3", params={"ticket": "#130"}, headers=ADMIN)
     r = client.get("/reviews")
-    assert r.status_code == 200 and "VINFAST-Q4-2026" in r.text and "DeleteReviewGoal" in r.text and "#130" in r.text
+    assert r.status_code == 200 and "VINFAST-Q4-2026" in r.text and "DeleteReviewGoal" in r.text and "#130" not in r.text
 
 
 @pytest.mark.parametrize("path", ["/admin/reviews/periods", "/admin/reviews/forms", "/admin/reviews/log"])

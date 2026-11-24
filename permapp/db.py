@@ -167,7 +167,8 @@ review_log = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("at", String(32), nullable=False),  # UTC ISO timestamp
-    Column("ticket", String(32), nullable=False),
+    Column("ticket", String(32), nullable=False),  # always "" now (no tickets in the system); kept for old DBs
+    Column("actor", String(16), nullable=True),  # console | agent; NULL on old rows reads as agent
     Column("action", String(64), nullable=False),  # operationId of the write
     Column("target", String(64), nullable=False),  # period, form or goal id
     Column("detail", String(1024), nullable=False),
@@ -356,6 +357,7 @@ LATE_COLUMNS = [
     ("miniapps", "always_visible", "BOOLEAN"),
     ("miniapps", "roles", "VARCHAR(256)"),
     ("miniapp_grants", "role", "VARCHAR(32)"),
+    ("review_log", "actor", "VARCHAR(16)"),
 ]
 
 

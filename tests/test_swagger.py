@@ -82,3 +82,15 @@ def test_check_eligibility_documented_and_grants_mention_both_403_codes():
     assert "NOT_ELIGIBLE" in spec["definitions"]["Error"]["properties"]["code"]["description"]
     for d in ("User", "UserWithGrants"):
         assert {"department", "title", "manager_email", "status"} <= set(spec["definitions"][d]["properties"])
+
+
+def test_no_ticket_or_client_header_in_spec():
+    """The system takes no ticket (the agent only reads tickets for context); X-Client is console-only."""
+    spec = build_swagger("h")
+    for ops in spec["paths"].values():
+        for op in ops.values():
+            assert all(p["name"] not in ("ticket", "X-Client") for p in op["parameters"]), op["operationId"]
+    for name, d in spec["definitions"].items():
+        assert "ticket" not in d.get("properties", {}) and "ticket" not in d.get("required", []), name
+    text = json.dumps(spec)
+    assert "TICKET_REQUIRED" not in text and "X-Client" not in text

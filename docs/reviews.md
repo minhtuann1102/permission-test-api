@@ -5,6 +5,7 @@ Nó dùng chung API, admin key, người dùng mẫu và nút reset với phần
 
 **Không gồm** *Phân quyền quản lý đánh giá* (99 ticket). Phần đó do agent riêng làm trực tiếp trên QTNS UAT.
 
+- Thao tác bằng tay như người xử lý ngoài đời: màn hình **Đánh giá** ở `/?as=admin&section=reviews` (tab *Phiếu đánh giá* và *Kỳ đánh giá*, nhật ký bên phải).
 - Trang xem nhanh, chỉ đọc, không cần key, tự tải lại mỗi 10 giây: `/reviews`. Trang có kỳ, phiếu, mục tiêu, người đánh giá và nhật ký.
 - API: `/admin/reviews/...`, header `X-API-Key` = admin key. Có 14 thao tác, xem mục 4.
 - `POST /admin/reset` khôi phục cả dữ liệu đánh giá, đồng thời xoá kết quả HQCV và nhật ký.
@@ -51,7 +52,8 @@ Nhân viên là các user sẵn có: `user1` (Phòng Đào tạo), `user2` (Phò
 
 ## 3. Luật (API kiểm tra và chặn, agent chỉ đọc kết quả)
 
-- **Mọi thao tác ghi phải có số ticket SDP** (`#54` hoặc `54`). Thiếu thì trả `422 TICKET_REQUIRED`. Mỗi thay đổi được ghi vào nhật ký (`ListReviewLog`).
+- **Hệ thống không nhận số ticket**, giống ngoài đời: người xử lý (hoặc agent) đọc ticket trên SDP rồi thao tác. Agent cũ lỡ gửi `ticket` thì API bỏ qua.
+- Mỗi thay đổi được ghi vào nhật ký (`ListReviewLog`) kèm `actor`: `agent`, hoặc `console` khi làm bằng tay trên màn hình *Đánh giá* ở `/`.
 - Thao tác ghi thành công trả `200`, kèm `result` = `DONE` hoặc `NO_CHANGE` và `message` (1 câu tiếng Việt).
   Vi phạm luật trả lỗi 4xx `{"detail", "code"}`. `detail` nói cách làm đúng, ví dụ "Mở lại phiếu (ReopenReviewForm) trước…".
 - **Kỳ**:
@@ -87,8 +89,8 @@ Nhân viên là các user sẵn có: `user1` (Phòng Đào tạo), `user2` (Phò
 | `ExtendReviewForm` | `POST /admin/reviews/forms/{form_id}/extend` | Gia hạn riêng một phiếu |
 | `UpdateReviewEvaluator` | `PUT /admin/reviews/forms/{form_id}/evaluator` | Đổi người đánh giá |
 | `UpdateReviewGoal` | `PUT /admin/reviews/goals/{goal_id}` | Sửa mục tiêu / tiêu chí |
-| `DeleteReviewGoal` | `DELETE /admin/reviews/goals/{goal_id}?ticket=` | Xoá mục tiêu / tiêu chí |
-| `ListReviewLog` | `GET /admin/reviews/log?ticket=` | Nhật ký thay đổi |
+| `DeleteReviewGoal` | `DELETE /admin/reviews/goals/{goal_id}` | Xoá mục tiêu / tiêu chí |
+| `ListReviewLog` | `GET /admin/reviews/log?target=` | Nhật ký thay đổi |
 
 ## 5. Kịch bản test (ticket → kết quả đúng)
 
@@ -116,9 +118,9 @@ Tạo các ticket này trên SDP, requester là email của nhân viên trong b�
 ```bash
 B=https://permission-test-api-jvd4.vercel.app; A="X-API-Key: <admin key>"; J="Content-Type: application/json"
 curl -s "$B/admin/reviews/forms?email=user2@demo.local&kind=KPI" -H "$A"
-curl -s -X POST "$B/admin/reviews/periods/VINFAST-Q4-2026/extend" -H "$A" -H "$J" -d '{"deadline":"2026-12-10","ticket":"#54"}'
-curl -s -X DELETE "$B/admin/reviews/goals/G-1002-3?ticket=%2355" -H "$A"     # 409 FORM_APPROVED
-curl -s -X POST "$B/admin/reviews/forms/RF-1002/reopen" -H "$A" -H "$J" -d '{"ticket":"#55"}'
-curl -s -X DELETE "$B/admin/reviews/goals/G-1002-3?ticket=%2355" -H "$A"     # DONE
-curl -s "$B/admin/reviews/log?ticket=55" -H "$A"
+curl -s -X POST "$B/admin/reviews/periods/VINFAST-Q4-2026/extend" -H "$A" -H "$J" -d '{"deadline":"2026-12-10"}'
+curl -s -X DELETE "$B/admin/reviews/goals/G-1002-3" -H "$A"     # 409 FORM_APPROVED
+curl -s -X POST "$B/admin/reviews/forms/RF-1002/reopen" -H "$A" -H "$J" -d '{}'
+curl -s -X DELETE "$B/admin/reviews/goals/G-1002-3" -H "$A"     # DONE
+curl -s "$B/admin/reviews/log?target=G-1002-3" -H "$A"
 ```
