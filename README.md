@@ -24,13 +24,22 @@ Trang chỉ đọc là `/reviews`. Dữ liệu mẫu, luật và kịch bản te
 
 ## Giao diện demo
 
-- `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**, **user3**.
-  - Admin: bảng người dùng × miniapp, mỗi ô có công tắc *Quyền hệ thống* (tầng 1) và *Thành viên* (tầng 2),
-    nút *Reset dữ liệu*. Cột LMS thay công tắc *Thành viên* bằng ô chọn *Vai trò*. Dưới tên người dùng là
-    đơn vị · chức danh, người đã nghỉ việc có nhãn *Đã nghỉ việc*. Thao tác bị chặn (`NOT_ELIGIBLE`) hiện lý do ngay trong ô. Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại).
-  - user1 / user2: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
-  - Tự cập nhật mỗi 3 giây; ô nào vừa đổi do agent (hoặc nơi khác) sẽ được tô sáng.
-- `/status`: bảng trạng thái quyền chỉ đọc, không cần key.
+- `/`: màn hình thao tác bằng tay như người xử lý ngoài đời, không cần agent. Thanh trên chuyển nhanh giữa
+  **Admin**, **user1**, **user2**, **user3**; với Admin có thêm hai mục **Phân quyền miniapp** và **Đánh giá**
+  (`/?as=admin&section=permissions|reviews`).
+  - *Phân quyền miniapp*: chọn người dùng → xem quyền đang có (bấm ✕ để thu hồi: chỉ quyền dùng, hoặc thu hồi hết)
+    → chọn nhiều quyền trong dropdown (mỗi miniapp *Xem* hoặc *Sử dụng*, LMS *Học viên* / *Giảng viên*) →
+    **Cấp N quyền** → hộp xác nhận liệt kê trước → sau và kết quả kiểm tra điều kiện → kết quả từng quyền.
+    Chọn *Sử dụng* thì tự cấp luôn quyền hệ thống; một quyền bị từ chối không làm hỏng các quyền khác.
+  - *Đánh giá*: tab *Phiếu đánh giá* (chọn nhân viên → phiếu của họ → mở lại, gia hạn, đổi người đánh giá,
+    sửa / xoá mục tiêu; phiếu đã phê duyệt thì một lần xác nhận *Mở lại phiếu rồi …*) và tab *Kỳ đánh giá*
+    (gia hạn, mở lại, tạo kỳ, dán bảng kết quả HQCV). Thao tác bị luật chặn thì nút mờ kèm lý do.
+  - **Nhật ký thay đổi** luôn ở bên phải, tự cập nhật mỗi 3 giây: mỗi thay đổi một dòng, ghi *Thao tác tay*
+    (màn hình này, gửi header `X-Client: console`) hoặc *Agent* (mọi lời gọi khác), dòng mới được tô sáng.
+    Thao tác bị từ chối không ghi nhật ký, chỉ báo lý do trên màn hình.
+  - Admin key nhập một lần, trình duyệt ghi nhớ (*Đổi admin key* để nhập lại). *Reset dữ liệu* xoá cả nhật ký.
+  - user1 / user2 / user3: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
+- `/status`: bảng tổng quan trạng thái quyền (người dùng × miniapp), chỉ đọc, không cần key.
 - `/reviews`: kỳ, phiếu, mục tiêu, người đánh giá và nhật ký của hệ thống đánh giá giả lập. Chỉ đọc, không cần key.
 
 ## API key (header `X-API-Key`)
