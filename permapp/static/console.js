@@ -1,4 +1,7 @@
-/* Demo console: DOM + network. Pure rules live in console-logic.js (window.ConsoleLogic). */
+/* Operator console shell: accounts, admin sections, polling, live change log, dialogs.
+ * Pure rules live in console-logic.js (window.ConsoleLogic). Admin screens are separate modules
+ * (perm-screen.js -> window.PermScreen, review-screen.js -> window.ReviewScreen) that render into the
+ * work area with the helpers in window.ConsoleShell. */
 (function () {
   "use strict";
 
@@ -7,6 +10,16 @@
   var USER_KEYS = { user1: "user1-key-123", user2: "user2-key-123", user3: "user3-key-123" };
   var K_ROLE = "permconsole.role";
   var K_ADMIN = "permconsole.adminKey";
+  var SECTION_HEAD = {
+    permissions: {
+      title: "Phân quyền miniapp",
+      lead: "Chọn người dùng, chọn các quyền cần cấp rồi xác nhận. Mọi thay đổi, kể cả do agent làm, hiện ngay ở nhật ký bên phải.",
+    },
+    reviews: {
+      title: "Đánh giá",
+      lead: "Hệ thống đánh giá giả lập: phiếu của từng nhân viên và các kỳ đánh giá. Mọi thay đổi, kể cả do agent làm, hiện ngay ở nhật ký bên phải.",
+    },
+  };
 
   var storage = null;
   try { storage = window.localStorage; } catch (e) { storage = null; }
@@ -15,9 +28,11 @@
   var app = document.getElementById("app");
   var syncEl = document.getElementById("sync");
   var syncLive = document.getElementById("sync-live");
+  var sectionsNav = document.getElementById("sections");
 
   var state = {
     role: L.pickRole(window.location.search, store.get(K_ROLE)),
+    section: L.pickSection(window.location.search),
     seq: 0,
     lastMutationStartSeq: 0,
     inFlight: 0,
@@ -25,12 +40,15 @@
     latestLoadSeq: 0,
     data: null,
     dataSig: null,
+    logSig: null,
+    log: null,
+    logSeen: { permissions: null, reviews: null },
     snapshot: null,
     notice: null,
     noticeTimer: null,
     view: null,
     syncOk: null,
-    cellError: null,
+    ui: { permissions: {}, reviews: {} },
   };
 
   // ---------- small DOM helpers ----------
@@ -60,6 +78,8 @@
     none: "M4 4l8 8 M12 4l-8 8",
     error: "M8 2.5l6 11H2z M8 6.5v3 M8 11.5v.5",
     success: "M4 8.5l2.5 2.5L12 5.5",
+    close: "M4.5 4.5l7 7 M11.5 4.5l-7 7",
+    chevron: "M4.5 6.5L8 10l3.5-3.5",
   };
 
   function icon(name) {
@@ -82,9 +102,11 @@
 
   // ---------- network ----------
 
+  // Every console request says it comes from the console, so the change logs can tell "by hand" from the agent.
   function api(path, opts) {
     opts = opts || {};
-    var headers = { "X-API-Key": opts.key || "" };
+    var key = opts.key !== undefined ? opts.key : currentKey();
+    var headers = { "X-API-Key": key || "", "X-Client": "console" };
     var init = { method: opts.method || "GET", headers: headers, cache: "no-store" };
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
@@ -107,6 +129,10 @@
 
   function currentKey() {
     return state.role === "admin" ? store.get(K_ADMIN) : USER_KEYS[state.role];
+  }
+
+  function screen() {
+    return state.section === "reviews" ? window.ReviewScreen : window.PermScreen;
   }
 
   // ---------- notices and sync line ----------
@@ -135,9 +161,7 @@
       syncLive.textContent = ok ? "Đã cập nhật lại dữ liệu." : "Không cập nhật được dữ liệu, đang thử lại.";
     }
     if (ok) {
-      var t = new Date();
-      var pad = function (n) { return (n < 10 ? "0" : "") + n; };
-      syncEl.textContent = "Tự cập nhật mỗi 3 giây, lần cuối " + pad(t.getHours()) + ":" + pad(t.getMinutes()) + ":" + pad(t.getSeconds());
+      syncEl.textContent = "Tự cập nhật mỗi 3 giây, lần cuối " + clock(new Date());
       syncEl.classList.remove("is-failing");
     } else {
       syncEl.textContent = "Không cập nhật được, đang thử lại";
@@ -145,14 +169,17 @@
     }
   }
 
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function clock(t) { return pad(t.getHours()) + ":" + pad(t.getMinutes()) + ":" + pad(t.getSeconds()); }
+
   // ---------- rendering ----------
 
-  function keepFocus(renderFn) {
+  function keepFocus(root, renderFn) {
     var active = document.activeElement;
-    var focusId = active && active.getAttribute ? active.getAttribute("data-focus") : null;
+    var focusId = active && root.contains(active) && active.getAttribute ? active.getAttribute("data-focus") : null;
     renderFn();
     if (focusId) {
-      var again = app.querySelector('[data-focus="' + focusId + '"]');
+      var again = root.querySelector('[data-focus="' + focusId + '"]');
       if (again) again.focus();
     }
   }
@@ -160,6 +187,12 @@
   function paintRoles() {
     document.querySelectorAll(".role").forEach(function (b) {
       b.setAttribute("aria-pressed", b.getAttribute("data-role") === state.role ? "true" : "false");
+    });
+    sectionsNav.hidden = state.role !== "admin";
+    sectionsNav.querySelectorAll(".section-tab").forEach(function (b) {
+      var on = b.getAttribute("data-section") === state.section;
+      if (on) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
     });
   }
 
@@ -175,10 +208,13 @@
 
   function renderLoading() {
     if (state.role === "admin") {
+      var head = SECTION_HEAD[state.section];
       mount([
-        h("div", { class: "head" }, [h("div", null, [h("h1", { text: "Phân quyền miniapp" })])]),
-        h("div", { class: "skeleton skeleton--grid", "aria-busy": "true", "aria-label": "Đang tải" },
-          [0, 1, 2].map(function (r) { return h("div", { class: r === 0 ? "skeleton__head" : "skeleton__row" }, [h("i"), h("i"), h("i"), h("i")]); })),
+        h("div", { class: "head" }, [h("div", null, [h("h1", { text: head.title })])]),
+        h("div", { class: "workspace" }, [
+          h("div", { class: "skeleton", "aria-busy": "true", "aria-label": "Đang tải" }, [h("i"), h("i"), h("i")]),
+          h("div", { class: "skeleton" }, [h("i"), h("i")]),
+        ]),
       ]);
     } else {
       mount([
@@ -238,28 +274,106 @@
       ]);
     });
     mount([head, noticeEl(), h("div", { class: "shelf" }, cards)]);
+    clearHighlights(highlight);
+  }
+
+  function clearHighlights(highlight) {
+    if (!highlight || !highlight.length) return;
+    setTimeout(function () {
+      document.querySelectorAll(".is-changed").forEach(function (el) { el.classList.remove("is-changed"); });
+    }, 2400);
+  }
+
+  // ---------- admin layout: head, work area (screen module), change log (shell) ----------
+
+  function adminViewName() { return "admin:" + state.section; }
+
+  function renderAdminFrame() {
+    var head = SECTION_HEAD[state.section];
+    mount([
+      h("div", { class: "head" }, [
+        h("div", null, [h("h1", { text: head.title }), h("p", { text: head.lead })]),
+        h("div", { class: "head__actions", id: "head-actions" }),
+      ]),
+      noticeEl(),
+      h("div", { class: "workspace" }, [
+        h("div", { class: "work", id: "work" }),
+        h("aside", { class: "logpanel", id: "logpanel", "aria-labelledby": "log-title" }),
+      ]),
+    ]);
+    paintHeadActions();
+  }
+
+  function paintHeadActions() {
+    var el = document.getElementById("head-actions");
+    if (!el) return;
+    el.textContent = "";
+    el.appendChild(h("button", { type: "button", class: "key key--quiet", "data-focus": "change-key", text: "Đổi admin key", onclick: changeKey }));
+    if (state.confirmReset) {
+      el.appendChild(h("button", { type: "button", class: "key key--danger", "data-focus": "reset-confirm", text: "Xác nhận reset", onclick: doReset }));
+      el.appendChild(h("button", { type: "button", class: "key key--quiet", "data-focus": "reset-cancel", text: "Huỷ", onclick: cancelReset }));
+    } else {
+      el.appendChild(h("button", { type: "button", class: "key key--quiet key--danger", "data-focus": "reset", text: "Reset dữ liệu", onclick: askReset }));
+    }
+  }
+
+  function renderWork() {
+    var work = document.getElementById("work");
+    if (!work || !state.data) return;
+    keepFocus(work, function () {
+      work.textContent = "";
+      screen().render(work, state.data, shell);
+    });
+  }
+
+  function logLine(entry) {
+    if (state.section === "permissions") {
+      return [
+        h("p", { class: "log__text", text: L.permLogText(entry) }),
+        h("p", { class: "log__delta", text: L.levelLabel(entry.from_level) + " → " + L.levelLabel(entry.to_level) }),
+      ];
+    }
+    return [
+      h("p", { class: "log__text" }, [h("b", { text: entry.target }), " · " + entry.detail]),
+    ];
+  }
+
+  function renderLog(highlightIds) {
+    var panel = document.getElementById("logpanel");
+    if (!panel || !state.log) return;
+    var entries = state.log.entries || [];
+    panel.textContent = "";
+    panel.appendChild(h("h2", { id: "log-title", class: "logpanel__title", text: "Nhật ký thay đổi" }));
+    if (!entries.length) {
+      panel.appendChild(h("p", { class: "logpanel__empty", text: "Chưa có thay đổi nào." }));
+      return;
+    }
+    panel.appendChild(h("ol", { class: "log", "aria-live": "polite" }, entries.slice(0, 50).map(function (e) {
+      var at = new Date(e.at);
+      return h("li", { class: "log__row" + (highlightIds.indexOf(e.id) !== -1 ? " is-changed" : "") }, [
+        h("p", { class: "log__meta" }, [
+          h("time", { datetime: e.at, text: isNaN(at.getTime()) ? e.at : clock(at) }),
+          h("span", { class: "actor actor--" + (e.actor === "console" ? "console" : "agent"), text: L.actorLabel(e.actor) }),
+        ]),
+      ].concat(logLine(e)));
+    })));
+    clearHighlights(highlightIds);
   }
 
   function render(highlight) {
     paintRoles();
     if (state.view === "user") renderUser(highlight || []);
-    else if (state.view === "admin") renderAdmin(highlight || []);
     else if (state.view === "key") renderKeyForm();
-    if (highlight && highlight.length) {
-      setTimeout(function () {
-        app.querySelectorAll(".is-changed").forEach(function (el) { el.classList.remove("is-changed"); });
-      }, 2400);
-    }
   }
 
-  // ---------- actions ----------
+  // ---------- user actions ----------
 
   function useMiniapp(a, btn, result) {
     if (btn.getAttribute("aria-busy") === "true") return;
     beginMutation();
     btn.setAttribute("aria-busy", "true");
     btn.setAttribute("aria-disabled", "true");
-    api("/miniapps/" + encodeURIComponent(a.id) + "/use", { method: "POST", key: currentKey() }).then(function (r) {
+    api("/miniapps/" + encodeURIComponent(a.id) + "/use", { method: "POST" }).then(function (r) {
       endMutation();
       btn.removeAttribute("aria-busy");
       btn.removeAttribute("aria-disabled");
@@ -283,6 +397,7 @@
 
   function load(kind) {
     var role = state.role;
+    var section = state.section;
     if (kind === "initial") renderLoading();
     var key = currentKey();
     if (role === "admin" && !key) {
@@ -294,61 +409,104 @@
     }
     var seq = nextSeq();
     state.latestLoadSeq = seq;
-    var req = role === "admin" ? fetchAdmin(key) : fetchUser(key);
+    var req = role === "admin" ? screen().fetch(api) : fetchUser(key);
     return req.then(function (res) {
-      if (role !== state.role) return;
+      if (role !== state.role || section !== state.section) return;
       if (!L.shouldApplyLoad(seq, state.latestLoadSeq, state.lastMutationStartSeq, state.inFlight)) return;
       if (!res.ok) {
-        if (role === "admin" && (res.status === 401 || res.status === 403)) {
+        if (role === "admin" && (res.status === 401 || (res.status === 403 && res.code !== "NOT_ELIGIBLE"))) {
           store.remove(K_ADMIN);
           state.view = "key";
           state.keyError = "Admin key đã lưu không còn đúng. Nhập lại key.";
           render();
           return;
         }
-        if (kind !== "initial" && state.data) { setSync(false); return; }
         setSync(false);
+        if (kind !== "initial" && state.data) return;
         state.data = null;
         renderError(res.detail);
         return;
       }
       setSync(true);
-      var highlight = kind === "poll" ? L.diffSnapshots(state.snapshot, res.snapshot) : [];
-      var sig = JSON.stringify(res.data);
-      var viewName = role === "admin" ? "admin" : "user";
-      state.snapshot = res.snapshot;
-      if (sig === state.dataSig && state.view === viewName) return;
-      state.data = res.data;
-      state.dataSig = sig;
-      state.view = viewName;
-      keepFocus(function () { render(highlight); });
+      if (role === "admin") applyAdmin(res);
+      else applyUser(res, kind);
     });
   }
 
-  function writeUrl(role, push) {
+  function applyUser(res, kind) {
+    var highlight = kind === "poll" ? L.diffSnapshots(state.snapshot, res.snapshot) : [];
+    var sig = JSON.stringify(res.data);
+    state.snapshot = res.snapshot;
+    if (sig === state.dataSig && state.view === "user") return;
+    state.data = res.data;
+    state.dataSig = sig;
+    state.view = "user";
+    keepFocus(app, function () { render(highlight); });
+  }
+
+  // The work area and the log repaint independently: a new log row never wipes what the operator is
+  // doing, and open dialogs live outside #app so no repaint touches them.
+  function applyAdmin(res) {
+    var fresh = state.view !== adminViewName();
+    if (fresh) {
+      state.view = adminViewName();
+      state.dataSig = null;
+      state.logSig = null;
+      renderAdminFrame();
+    }
+    var sig = JSON.stringify(res.data);
+    if (sig !== state.dataSig) {
+      state.data = res.data;
+      state.dataSig = sig;
+      renderWork();
+    }
+    var logSig = JSON.stringify(res.log);
+    if (logSig !== state.logSig) {
+      var seen = L.newLogIds(res.log.entries || [], state.logSeen[state.section]);
+      state.logSeen[state.section] = seen.lastSeenId;
+      state.log = res.log;
+      state.logSig = logSig;
+      renderLog(seen.ids);
+    }
+  }
+
+  function sectionUrl(role, section) {
+    return window.location.pathname + "?as=" + role + (role === "admin" ? "&section=" + section : "");
+  }
+
+  function writeUrl(push) {
     try {
-      var url = window.location.pathname + "?as=" + role;
-      if (push) window.history.pushState({ as: role }, "", url);
-      else window.history.replaceState({ as: role }, "", url);
+      var url = sectionUrl(state.role, state.section);
+      var st = { as: state.role, section: state.section };
+      if (push) window.history.pushState(st, "", url);
+      else window.history.replaceState(st, "", url);
     } catch (e) { /* history unavailable: the view still works */ }
   }
 
-  function switchRole(role, fromHistory) {
-    if (role === state.role) return;
-    state.role = role;
-    store.set(K_ROLE, role);
-    if (!fromHistory) writeUrl(role, true);
-    state.cellError = null;
+  function resetView() {
     state.data = null;
     state.dataSig = null;
+    state.log = null;
+    state.logSig = null;
     state.snapshot = null;
     state.notice = null;
     state.view = null;
+    state.logSeen = { permissions: null, reviews: null };
     invalidateLoads();
     state.keyError = null;
     state.changingKey = false;
     state.confirmReset = false;
     clearTimeout(state.resetTimer);
+    closeDialog();
+  }
+
+  function switchTo(role, section, fromHistory) {
+    if (role === state.role && section === state.section) return;
+    state.role = role;
+    state.section = section;
+    store.set(K_ROLE, role);
+    if (!fromHistory) writeUrl(true);
+    resetView();
     paintRoles();
     load("initial");
   }
@@ -360,203 +518,118 @@
     load("poll").then(done, done);
   }
 
-  // ---------- admin ----------
+  // ---------- shared helpers for the screens ----------
 
-  function fetchAdmin(key) {
-    return Promise.all([api("/admin/users", { key: key }), api("/admin/miniapps", { key: key })]).then(function (rs) {
-      var bad = rs.filter(function (r) { return !r.ok; })[0];
-      if (bad) return { ok: false, status: bad.status, detail: bad.data.detail };
-      var users = rs[0].data.users;
-      var miniapps = rs[1].data.miniapps;
-      return { ok: true, data: { users: users, miniapps: miniapps }, snapshot: L.adminSnapshot(users, miniapps) };
-    });
-  }
-
-  function switchButton(kind, user, app, on, label, step, waiting) {
-    var id = kind + "|" + user.username + "|" + app.id;
-    return h("button", {
-      type: "button",
-      class: "switch" + (waiting ? " switch--waiting" : ""),
-      role: "switch",
-      "aria-checked": on ? "true" : "false",
-      "data-focus": id,
-      onclick: function (ev) { toggle(kind, user, app, on, ev.currentTarget); },
-    }, [
-      h("span", { class: "switch__track", "aria-hidden": "true" }, [h("span", { class: "switch__thumb" })]),
-      h("span", { class: "switch__label" }, [
-        h("span", { class: "switch__step", "aria-hidden": "true", text: step + "." }),
-        h("span", { text: label }),
-        waiting ? h("span", { class: "switch__hint", text: "cần bước 1" }) : null,
-      ]),
-    ]);
-  }
-
-  function renderAdmin(highlight) {
-    var users = state.data.users.filter(function (u) { return u.role === "user"; });
-    var miniapps = state.data.miniapps;
-
-    var resetArea = state.confirmReset
-      ? [
-          h("button", { type: "button", class: "key key--danger", "data-focus": "reset-confirm", text: "Xác nhận reset", onclick: doReset }),
-          h("button", { type: "button", class: "key key--quiet", "data-focus": "reset-cancel", text: "Huỷ", onclick: cancelReset }),
-        ]
-      : [h("button", { type: "button", class: "key key--quiet key--danger", "data-focus": "reset", text: "Reset dữ liệu", onclick: askReset })];
-
-    var head = h("div", { class: "head" }, [
-      h("div", null, [
-        h("h1", { text: "Phân quyền miniapp" }),
-        h("p", { text: "Bước 1: bật Quyền hệ thống để người dùng nhìn thấy miniapp. Bước 2: bật Thành viên để họ dùng được. Phải có bước 1 trước bước 2." }),
-      ]),
-      h("div", { class: "head__actions" }, [
-        h("button", { type: "button", class: "key key--quiet", "data-focus": "change-key", text: "Đổi admin key", onclick: changeKey }),
-      ].concat(resetArea)),
-    ]);
-
-    if (!users.length || !miniapps.length) {
-      mount([head, noticeEl(), h("div", { class: "state-block" }, [
-        h("h2", { text: "Chưa có người dùng hoặc miniapp nào" }),
-        h("p", { text: "Dữ liệu mẫu được tạo khi reset. Bấm Reset dữ liệu để tạo lại." }),
-      ])]);
-      return;
-    }
-
-    var thead = h("thead", null, [h("tr", null, [h("th", { scope: "col", text: "Người dùng" })].concat(
-      miniapps.map(function (m) { return h("th", { scope: "col" }, [m.name, h("small", { text: m.id })]); })
-    ))]);
-
-    var rows = users.map(function (u) {
-      var cells = miniapps.map(function (m) {
-        var st = L.cellState(u, m.id, m.always_visible);
-        var sees = st !== "none";
-        var member = st === "use";
-        var key = u.username + "|" + m.id;
-        return h("td", { "data-label": m.name }, [
-          h("div", { class: "cell" + (highlight.indexOf(key) !== -1 ? " is-changed" : "") }, [
-            h("p", { class: "state state--" + st }, [icon(st), L.cellLabel(st, L.memberRole(u, m.id))]),
-            m.always_visible
-              ? h("p", { class: "cell__note" }, [h("span", { class: "switch__step", "aria-hidden": "true", text: "1." }), "Luôn nhìn thấy, không cần quyền hệ thống"])
-              : switchButton("system", u, m, sees, "Quyền hệ thống", 1, false),
-            m.roles && m.roles.length
-              ? roleSelect(u, m, member)
-              : switchButton("member", u, m, member, "Thành viên", 2, !sees),
-            state.cellError && state.cellError.key === key
-              ? h("p", { class: "cell__error", role: "alert" }, [icon("error"), h("span", { text: state.cellError.text })])
-              : null,
-          ]),
-        ]);
-      });
-      var org = L.orgLine(u);
-      return h("tr", null, [h("th", { scope: "row", class: "who" }, [
-        h("b", { text: u.display_name }),
-        h("span", { text: u.username }),
-        u.email ? h("span", { class: "who__email", text: u.email }) : null,
-        org ? h("span", { class: "who__org", text: org }) : null,
-        L.isResigned(u) ? h("span", { class: "badge badge--gone", text: "Đã nghỉ việc" }) : null,
-      ])].concat(cells));
-    });
-
-    mount([
-      head,
-      noticeEl(),
-      h("div", { class: "grid-wrap" }, [h("table", { class: "grid" }, [
-        h("caption", { class: "visually-hidden", text: "Quyền của từng người dùng với từng miniapp" }),
-        thead,
-        h("tbody", null, rows),
-      ])]),
-    ]);
-  }
-
-  // Member control for miniapps with roles (LMS): pick a role, or "not a member".
-  function roleSelect(user, app, isMember) {
-    var id = "role|" + user.username + "|" + app.id;
-    var current = isMember ? L.memberRole(user, app.id) || app.roles[0] : "";
-    var sel = h("select", {
-      class: "role-select",
-      "data-focus": id,
-      "aria-label": "Vai trò của " + user.display_name + " trong " + app.name,
-    }, [h("option", { value: "", text: "Chưa là thành viên" })].concat(
-      app.roles.map(function (r) { return h("option", { value: r, text: L.roleLabel(r) }); })
-    ));
-    sel.value = current;
-    sel.addEventListener("change", function () { setRole(user, app, current, sel.value, sel); });
-    return h("label", { class: "role-field" }, [
-      h("span", { class: "switch__label" }, [h("span", { class: "switch__step", "aria-hidden": "true", text: "2." }), h("span", { text: "Vai trò" })]),
-      sel,
-    ]);
-  }
-
-  function setRole(user, app, from, to, el) {
-    if (from === to) return Promise.resolve();
-    var key = currentKey();
-    var base = "/admin/miniapps/" + encodeURIComponent(app.id) + "/members";
-    var req = to
-      ? api(base, { method: "POST", key: key, body: { username: user.username, role: to } })
-      : api(base + "/" + encodeURIComponent(user.username), { method: "DELETE", key: key });
-    var okText = to
-      ? "Đã đặt vai trò " + L.roleLabel(to) + " trong " + app.name + " cho " + user.display_name + "."
-      : "Đã gỡ thành viên " + app.name + " của " + user.display_name + ".";
-    return mutateCell(user, app, req, el, okText);
-  }
-
-  function toggle(kind, user, app, isOn, btn) {
-    var username = user.username;
-    var appId = app.id;
-    if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
-    var key = currentKey();
-    var req;
-    if (kind === "system") {
-      req = isOn
-        ? api("/admin/system-access/" + encodeURIComponent(username) + "/" + encodeURIComponent(appId), { method: "DELETE", key: key })
-        : api("/admin/system-access", { method: "POST", key: key, body: { username: username, miniapp_id: appId } });
-    } else {
-      req = isOn
-        ? api("/admin/miniapps/" + encodeURIComponent(appId) + "/members/" + encodeURIComponent(username), { method: "DELETE", key: key })
-        : api("/admin/miniapps/" + encodeURIComponent(appId) + "/members", { method: "POST", key: key, body: { username: username } });
-    }
-    var what = kind === "system" ? "quyền hệ thống" : "thành viên";
-    return mutateCell(user, app, req, btn, (isOn ? "Đã gỡ " : "Đã cấp ") + what + " " + app.name + " cho " + user.display_name + ".");
-  }
-
-  // `miniapp`, not `app`: `app` is the page root used below to restore focus.
-  function mutateCell(user, miniapp, req, btn, okText) {
-    var username = user.username;
-    var appId = miniapp.id;
-    var focusId = btn.getAttribute("data-focus");
+  // Runs a change (one or several API calls) as one mutation: no poll repaints in between.
+  function mutate(fn) {
     beginMutation();
-    btn.setAttribute("aria-disabled", "true");
-    btn.setAttribute("aria-busy", "true");
-    return req.then(function (r) {
+    var settle = function (value) {
       endMutation();
-      var cellKey = username + "|" + appId;
-      if (!r.ok) {
-        if (r.status === 401 || (r.status === 403 && r.data && r.data.code === "ADMIN_REQUIRED")) return load("after");
-        state.cellError = { key: cellKey, text: L.errorText(r.data, { user: user.display_name, app: miniapp.name }) };
-      } else {
-        if (state.cellError && state.cellError.key === cellKey) state.cellError = null;
-        if (state.role === "admin") notify("success", okText);
-      }
-      state.dataSig = null; // force a repaint so the switch shows the server's truth
-      return load("after").then(function () {
-        // Only restore focus if the repaint dropped it; never pull it off another control.
-        if (document.activeElement && document.activeElement !== document.body) return;
-        var again = app.querySelector('[data-focus="' + focusId + '"]');
-        if (again) again.focus();
-      });
+      state.dataSig = null;
+      return load("after").then(function () { return value; });
+    };
+    return Promise.resolve().then(fn).then(settle, function (err) {
+      return settle({ ok: false, message: String(err && err.message || err) });
     });
   }
+
+  function reload() { return load("after"); }
+
+  var dialogEl = null;
+
+  function closeDialog() {
+    if (!dialogEl) return;
+    var d = dialogEl;
+    dialogEl = null;
+    if (d.open) d.close();
+    d.remove();
+    if (d._returnFocus && document.contains(d._returnFocus)) d._returnFocus.focus();
+  }
+
+  // A modal dialog outside #app. onConfirm returns a promise; {ok:false, message} keeps it open
+  // with the message, anything else closes it.
+  function openDialog(opts) {
+    closeDialog();
+    var error = h("p", { class: "dialog__error", role: "alert" });
+    var confirm = h("button", {
+      type: "submit",
+      class: "key " + (opts.danger ? "key--danger" : "key--primary"),
+      text: opts.confirmText || "Xác nhận",
+    });
+    var cancel = h("button", { type: "button", class: "key key--quiet", text: "Huỷ", onclick: closeDialog });
+    var form = h("form", { class: "dialog__form", method: "dialog", novalidate: true }, [
+      h("h2", { class: "dialog__title", id: "dialog-title", text: opts.title }),
+      h("div", { class: "dialog__body" }, [opts.body]),
+      error,
+      h("div", { class: "dialog__actions" }, [cancel, confirm]),
+    ]);
+    var d = h("dialog", { class: "dialog", "aria-labelledby": "dialog-title" }, [form]);
+    d._returnFocus = document.activeElement;
+    var handle = {
+      el: d,
+      setError: function (text) { error.textContent = text || ""; },
+      setConfirmEnabled: function (on) { confirm.disabled = !on; },
+      setConfirmText: function (text) { confirm.textContent = text; },
+      close: closeDialog,
+    };
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (confirm.disabled || confirm.getAttribute("aria-busy") === "true") return;
+      error.textContent = "";
+      confirm.setAttribute("aria-busy", "true");
+      cancel.disabled = true;
+      Promise.resolve(opts.onConfirm(handle)).then(function (res) {
+        confirm.removeAttribute("aria-busy");
+        cancel.disabled = false;
+        if (res && res.ok === false) {
+          error.textContent = res.message || "Có lỗi xảy ra";
+          return;
+        }
+        closeDialog();
+      });
+    });
+    d.addEventListener("cancel", function (ev) { ev.preventDefault(); if (!cancel.disabled) closeDialog(); });
+    document.body.appendChild(d);
+    dialogEl = d;
+    d.showModal();
+    var first = d.querySelector("[autofocus], input, select, textarea");
+    (first || confirm).focus();
+    return handle;
+  }
+
+  var shell = {
+    h: h,
+    icon: icon,
+    api: api,
+    notify: notify,
+    mutate: mutate,
+    reload: reload,
+    rerender: function () { renderWork(); },
+    openDialog: openDialog,
+    closeDialog: closeDialog,
+    ui: function () { return state.ui[state.section]; },
+    L: L,
+  };
+  window.ConsoleShell = shell;
+
+  // ---------- reset and admin key ----------
 
   function askReset() {
     state.confirmReset = true;
     clearTimeout(state.resetTimer);
     state.resetTimer = setTimeout(cancelReset, 5000);
-    keepFocusOn("reset-confirm", function () { render(); });
+    paintHeadActions();
+    var el = app.querySelector('[data-focus="reset-confirm"]');
+    if (el) el.focus();
   }
 
   function cancelReset() {
     clearTimeout(state.resetTimer);
     if (!state.confirmReset) return;
     state.confirmReset = false;
-    if (state.view === "admin") keepFocusOn("reset", function () { render(); });
+    paintHeadActions();
+    var el = app.querySelector('[data-focus="reset"]');
+    if (el) el.focus();
   }
 
   function doReset(ev) {
@@ -564,24 +637,17 @@
     var btn = ev.currentTarget;
     btn.disabled = true;
     btn.setAttribute("aria-busy", "true");
-    beginMutation();
-    api("/admin/reset", { method: "POST", key: currentKey() }).then(function (r) {
-      endMutation();
+    mutate(function () { return api("/admin/reset", { method: "POST" }); }).then(function (r) {
       state.confirmReset = false;
-      if (r.ok) notify("success", "Đã đưa dữ liệu về trạng thái ban đầu.");
-      else if (r.status !== 401 && r.status !== 403) notify("error", r.data.detail);
-      state.dataSig = null;
-      load("after").then(function () {
-        var again = app.querySelector('[data-focus="reset"]');
-        if (again) again.focus();
-      });
+      paintHeadActions();
+      if (r.ok) {
+        state.ui = { permissions: {}, reviews: {} };
+        renderWork();
+        notify("success", "Đã đưa dữ liệu về trạng thái ban đầu.");
+      } else if (r.status !== 401 && r.status !== 403) notify("error", r.data.detail);
+      var again = app.querySelector('[data-focus="reset"]');
+      if (again) again.focus();
     });
-  }
-
-  function keepFocusOn(id, fn) {
-    fn();
-    var el = app.querySelector('[data-focus="' + id + '"]');
-    if (el) el.focus();
   }
 
   function changeKey() {
@@ -612,7 +678,7 @@
       h("div", { class: "head__actions" }, [
         submit,
         state.changingKey && store.get(K_ADMIN)
-          ? h("button", { type: "button", class: "key key--quiet", text: "Huỷ", onclick: function () { state.changingKey = false; load("initial"); } })
+          ? h("button", { type: "button", class: "key key--quiet", text: "Huỷ", onclick: function () { state.changingKey = false; state.view = null; load("initial"); } })
           : null,
       ]),
     ]);
@@ -632,6 +698,7 @@
           store.set(K_ADMIN, value);
           state.keyError = null;
           state.changingKey = false;
+          state.view = null;
           if (state.role === "admin") load("initial");
         } else if (r.status === 401 || r.status === 403) {
           showKeyError(input, help, "Admin key không đúng. Kiểm tra lại key rồi thử lại.");
@@ -655,13 +722,17 @@
 
   document.getElementById("roles").addEventListener("click", function (ev) {
     var b = ev.target.closest(".role");
-    if (b) switchRole(b.getAttribute("data-role"));
+    if (b) switchTo(b.getAttribute("data-role"), state.section);
+  });
+  sectionsNav.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".section-tab");
+    if (b) switchTo(state.role, b.getAttribute("data-section"));
   });
   window.addEventListener("popstate", function () {
-    switchRole(L.pickRole(window.location.search, store.get(K_ROLE)), true);
+    switchTo(L.pickRole(window.location.search, store.get(K_ROLE)), L.pickSection(window.location.search), true);
   });
   store.set(K_ROLE, state.role);
-  writeUrl(state.role, false);
+  writeUrl(false);
   paintRoles();
   load("initial");
   setInterval(poll, POLL_MS);

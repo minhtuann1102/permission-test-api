@@ -3,20 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Quản lý quyền miniapp</title>
-  <meta name="description" content="Cấp quyền hệ thống và thành viên miniapp cho người dùng, bằng tay hoặc qua agent.">
+  <title>Quản trị: phân quyền miniapp và đánh giá</title>
+  <meta name="description" content="Màn hình thao tác của quản trị viên: phân quyền miniapp và hệ thống đánh giá, kèm nhật ký thay đổi.">
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/console.css">
   <script defer src="/static/console-logic.js"></script>
+  <script defer src="/static/perm-screen.js"></script>
+  <script defer src="/static/review-screen.js"></script>
   <script defer src="/static/console.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="shell topbar__row">
-      <a class="wordmark" href="/" aria-label="Quản lý quyền miniapp, trang chính">Quản lý quyền miniapp</a>
+      <a class="wordmark" href="/" aria-label="Quản trị, trang chính">Quản trị</a>
+      <nav class="sections" id="sections" aria-label="Chọn hệ thống" hidden>
+        <button type="button" class="section-tab" data-section="permissions">Phân quyền miniapp</button>
+        <button type="button" class="section-tab" data-section="reviews">Đánh giá</button>
+      </nav>
       <p class="sync" id="sync"></p>
       <p class="visually-hidden" id="sync-live" aria-live="polite"></p>
       <nav class="roles" aria-label="Chọn tài khoản" id="roles">
