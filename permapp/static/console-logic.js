@@ -165,6 +165,17 @@
     return next;
   }
 
+  // Picks that are no longer grantable (the user got that level meanwhile, e.g. from the agent) are dropped.
+  function prunePicks(picks, user, miniapps) {
+    var next = {};
+    grantOptions(user, miniapps).forEach(function (g) {
+      var level = picks[g.miniapp_id];
+      var opt = g.options.filter(function (o) { return o.level === level; })[0];
+      if (opt && !opt.disabled) next[g.miniapp_id] = level;
+    });
+    return next;
+  }
+
   function pickList(picks, miniapps) {
     return miniapps.filter(function (m) { return picks[m.id]; })
       .map(function (m) { return { miniapp_id: m.id, level: picks[m.id] }; });
@@ -221,6 +232,7 @@
     levelOf: levelOf,
     grantOptions: grantOptions,
     togglePick: togglePick,
+    prunePicks: prunePicks,
     pickList: pickList,
     newLogIds: newLogIds,
     actorLabel: actorLabel,

@@ -30,6 +30,7 @@
     var users = data.users.filter(function (u) { return u.role === "user"; });
     var user = users.filter(function (u) { return u.username === ui.user; })[0] || null;
     if (!user) ui.user = "";
+    else ui.picks = L.prunePicks(ui.picks, user, data.miniapps); // drop picks the user got meanwhile
 
     var select = h("select", { class: "select", id: "perm-user", "data-focus": "perm-user" },
       [h("option", { value: "", text: "Chọn người dùng" })].concat(users.map(function (u) {
@@ -106,14 +107,23 @@
       "aria-expanded": ui.pickerOpen ? "true" : "false", "aria-controls": "perm-picker",
       onclick: function () { ui.pickerOpen = !ui.pickerOpen; shell.rerender(); },
     }, [
-      picked.length
-        ? h("span", { class: "chips" }, picked.map(function (p) {
-            return h("span", { class: "chip chip--pick chip--plain", text: appById(data, p.miniapp_id).name + " · " + L.levelLabel(p.level) });
-          }))
-        : h("span", { class: "picker__placeholder", text: "Chọn một hoặc nhiều quyền" }),
+      h("span", { class: "picker__placeholder", text: picked.length ? "Đã chọn " + picked.length + " quyền · chọn thêm" : "Chọn một hoặc nhiều quyền" }),
       shell.icon("chevron"),
     ]);
-    var row = h("div", { class: "field-row" }, [h("label", { for: "perm-picker-button", text: "Quyền cần cấp" }), button]);
+    var chips = picked.length
+      ? h("ul", { class: "chips", role: "list", "aria-label": "Quyền đã chọn" }, picked.map(function (p) {
+          var label = appById(data, p.miniapp_id).name + " · " + L.levelLabel(p.level);
+          return h("li", { class: "chip chip--pick" }, [
+            h("span", { text: label }),
+            h("button", {
+              type: "button", class: "chip__x", "aria-label": "Bỏ chọn " + label, title: "Bỏ chọn",
+              "data-focus": "unpick-" + p.miniapp_id,
+              onclick: function () { ui.picks = L.togglePick(ui.picks, p.miniapp_id, p.level); shell.rerender(); },
+            }, [shell.icon("close")]),
+          ]);
+        }))
+      : null;
+    var row = h("div", { class: "field-row" }, [h("label", { for: "perm-picker-button", text: "Quyền cần cấp" }), chips, button]);
     if (!ui.pickerOpen) return row;
 
     var panel = h("div", { class: "picker__panel", id: "perm-picker" }, L.grantOptions(user, data.miniapps).map(function (group) {

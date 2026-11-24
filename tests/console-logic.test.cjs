@@ -235,3 +235,10 @@ test("parseResultRows: tab or comma, blank lines skipped, raw line numbers", () 
   assert.deepEqual(L.parseResultRows("d@x.vn").errors, ["dòng 1: cần đủ email, điểm, xếp loại"]);
   assert.deepEqual(L.parseResultRows("  \n").rows, []);
 });
+
+test("prunePicks drops picks the user already has (e.g. the agent granted them meanwhile)", () => {
+  // U2 sees Kho, uses Nghỉ phép, is LMS learner
+  const picks = { inventory: "see", leave: "see", expense: "use", lms: "learner" };
+  assert.deepEqual(L.prunePicks(picks, U2, APPS), { expense: "use" });
+  assert.deepEqual(L.prunePicks({ inventory: "use", lms: "instructor" }, U2, APPS), { inventory: "use", lms: "instructor" });
+});
