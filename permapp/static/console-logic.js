@@ -27,18 +27,6 @@
     return STATE_LABEL[state] + (state === "use" && role ? " · " + roleLabel(role) : "");
   }
 
-  function adminSnapshot(users, miniapps) {
-    var snap = {};
-    users.forEach(function (u) {
-      if (u.role !== "user") return;
-      miniapps.forEach(function (m) {
-        var role = memberRole(u, m.id);
-        snap[u.username + "|" + m.id] = cellState(u, m.id, m.always_visible) + (role ? ":" + role : "");
-      });
-    });
-    return snap;
-  }
-
   function userSnapshot(miniapps) {
     var snap = {};
     miniapps.forEach(function (m) {
@@ -128,6 +116,98 @@
     };
   }
 
+  // ---------- operator console ----------
+
+  var SECTIONS = ["permissions", "reviews"];
+
+  // &section=<name> in the URL, else the permissions screen.
+  function pickSection(search) {
+    var m = /[?&]section=([^&]*)/.exec(search || "");
+    var s = m ? decodeURIComponent(m[1]) : null;
+    return SECTIONS.indexOf(s) !== -1 ? s : "permissions";
+  }
+
+  var LEVEL_LABEL = { none: "Chưa có quyền", see: "Xem", use: "Sử dụng", learner: "Học viên", instructor: "Giảng viên" };
+
+  function levelLabel(level) {
+    return LEVEL_LABEL[level] || level || "";
+  }
+
+  // none | see | use | <member role>: same meaning as the server's level_of.
+  function levelOf(user, app) {
+    if ((user.memberships || []).indexOf(app.id) !== -1) return memberRole(user, app.id) || "use";
+    if (app.always_visible || (user.system_access || []).indexOf(app.id) !== -1) return "see";
+    return "none";
+  }
+
+  // Dropdown groups: one per miniapp. Levels the user already has (or Xem under Sử dụng) are disabled.
+  function grantOptions(user, miniapps) {
+    return miniapps.map(function (app) {
+      var current = levelOf(user, app);
+      var levels = app.roles && app.roles.length ? app.roles : ["see", "use"];
+      return {
+        miniapp_id: app.id,
+        name: app.name,
+        options: levels.map(function (level) {
+          var has = level === current || (level === "see" && current === "use");
+          return { level: level, label: levelLabel(level), disabled: has, note: has ? "đang có" : "" };
+        }),
+      };
+    });
+  }
+
+  // picks = {miniapp_id: level}; one level per miniapp, picking the same level again unpicks it.
+  function togglePick(picks, miniappId, level) {
+    var next = {};
+    Object.keys(picks).forEach(function (k) { next[k] = picks[k]; });
+    if (next[miniappId] === level) delete next[miniappId];
+    else next[miniappId] = level;
+    return next;
+  }
+
+  function pickList(picks, miniapps) {
+    return miniapps.filter(function (m) { return picks[m.id]; })
+      .map(function (m) { return { miniapp_id: m.id, level: picks[m.id] }; });
+  }
+
+  // Which log rows are new since the last look. First look and a log that went backwards (reset) only
+  // set the baseline, so nothing lights up by accident.
+  function newLogIds(entries, lastSeenId) {
+    var max = entries.reduce(function (m, e) { return Math.max(m, e.id); }, 0);
+    if (lastSeenId === null || lastSeenId === undefined || max < lastSeenId) return { ids: [], lastSeenId: max };
+    return {
+      ids: entries.filter(function (e) { return e.id > lastSeenId; }).map(function (e) { return e.id; }),
+      lastSeenId: max,
+    };
+  }
+
+  function actorLabel(actor) {
+    return actor === "console" ? "Thao tác tay" : "Agent";
+  }
+
+  function permLogText(entry) {
+    return entry.detail || [entry.action, entry.username, entry.miniapp_id].filter(Boolean).join(" ");
+  }
+
+  // HQCV results pasted from a spreadsheet: "email, điểm, xếp loại", comma or tab, one per line.
+  function parseResultRows(text) {
+    var rows = [];
+    var errors = [];
+    String(text || "").split(/\r?\n/).forEach(function (line, i) {
+      if (!line.trim()) return;
+      var parts = line.split(/\t|,/).map(function (p) { return p.trim(); });
+      var n = i + 1;
+      if (parts.length < 3 || !parts[0] || !parts[1] || !parts[2]) {
+        errors.push("dòng " + n + ": cần đủ email, điểm, xếp loại");
+      } else if (!/^\d+$/.test(parts[1])) {
+        errors.push("dòng " + n + ": điểm phải là số nguyên");
+      } else {
+        rows.push({ email: parts[0], score: parseInt(parts[1], 10), grade: parts[2].toUpperCase() });
+      }
+    });
+    return { rows: rows, errors: errors };
+  }
+
   var api = {
     STATE_LABEL: STATE_LABEL,
     ROLE_LABEL: ROLE_LABEL,
@@ -135,7 +215,17 @@
     cellState: cellState,
     memberRole: memberRole,
     cellLabel: cellLabel,
-    adminSnapshot: adminSnapshot,
+    pickSection: pickSection,
+    LEVEL_LABEL: LEVEL_LABEL,
+    levelLabel: levelLabel,
+    levelOf: levelOf,
+    grantOptions: grantOptions,
+    togglePick: togglePick,
+    pickList: pickList,
+    newLogIds: newLogIds,
+    actorLabel: actorLabel,
+    permLogText: permLogText,
+    parseResultRows: parseResultRows,
     userSnapshot: userSnapshot,
     diffSnapshots: diffSnapshots,
     shouldApplyPoll: shouldApplyPoll,

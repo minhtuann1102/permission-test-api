@@ -21,15 +21,6 @@ test("cellState: nothing is none", () => {
   assert.equal(L.cellState(USERS[2], "leave"), "none");
 });
 
-test("adminSnapshot lists only role=user accounts", () => {
-  const snap = L.adminSnapshot(USERS, MINIAPPS);
-  assert.equal(Object.keys(snap).length, 6);
-  assert.ok(!Object.keys(snap).some((k) => k.startsWith("admin|")));
-  assert.equal(snap["user1|leave"], "use");
-  assert.equal(snap["user2|inventory"], "see");
-  assert.equal(snap["user2|leave"], "none");
-});
-
 test("userSnapshot maps can_use to use/see", () => {
   assert.deepEqual(
     L.userSnapshot([{ id: "leave", can_use: true }, { id: "expense", can_use: false }]),
@@ -143,13 +134,6 @@ test("memberRole and cellLabel show the LMS role in Vietnamese", () => {
   assert.equal(L.cellLabel("see", ""), "Chỉ nhìn thấy");
 });
 
-test("adminSnapshot changes when only the LMS role changes", () => {
-  const apps = [{ id: "lms", always_visible: true }];
-  const before = L.adminSnapshot([{ username: "u", role: "user", memberships: ["lms"], member_roles: [{ miniapp_id: "lms", role: "learner" }] }], apps);
-  const after = L.adminSnapshot([{ username: "u", role: "user", memberships: ["lms"], member_roles: [{ miniapp_id: "lms", role: "instructor" }] }], apps);
-  assert.deepEqual(L.diffSnapshots(before, after), ["u|lms"]);
-});
-
 test("errorText: NOT_ELIGIBLE shows the server reason", () => {
   assert.equal(
     L.errorText({ code: "NOT_ELIGIBLE", detail: "Nhân viên đã nghỉ việc (RESIGNED), không được cấp quyền mới" }, { user: "Người dùng 3", app: "Nghỉ phép" }),
@@ -172,4 +156,82 @@ test("isResigned reads status case-insensitively", () => {
 
 test("pickRole accepts user3", () => {
   assert.equal(L.pickRole("?as=user3", null), "user3");
+});
+
+// ---------- operator console ----------
+
+const APPS = [
+  { id: "expense", name: "Chi phí", always_visible: false, roles: [] },
+  { id: "inventory", name: "Kho", always_visible: false, roles: [] },
+  { id: "leave", name: "Nghỉ phép", always_visible: false, roles: [] },
+  { id: "lms", name: "LMS", always_visible: true, roles: ["learner", "instructor"] },
+];
+const U2 = {
+  username: "user2", role: "user",
+  system_access: ["inventory", "leave"], memberships: ["leave", "lms"],
+  member_roles: [{ miniapp_id: "lms", role: "learner" }],
+};
+
+test("pickSection: section param wins, default permissions", () => {
+  assert.equal(L.pickSection("?as=admin&section=reviews"), "reviews");
+  assert.equal(L.pickSection("?as=admin"), "permissions");
+  assert.equal(L.pickSection("?section=bogus"), "permissions");
+});
+
+test("levelOf: none, see, use, role", () => {
+  assert.equal(L.levelOf(U2, APPS[0]), "none");
+  assert.equal(L.levelOf(U2, APPS[1]), "see");
+  assert.equal(L.levelOf(U2, APPS[2]), "use");
+  assert.equal(L.levelOf(U2, APPS[3]), "learner");
+  assert.equal(L.levelOf({ username: "x" }, APPS[3]), "see");
+  assert.equal(L.levelLabel("instructor"), "Giảng viên");
+  assert.equal(L.levelLabel("none"), "Chưa có quyền");
+});
+
+test("grantOptions: what the user has is disabled, LMS has no Xem", () => {
+  const groups = L.grantOptions(U2, APPS);
+  const by = Object.fromEntries(groups.map((g) => [g.miniapp_id, g.options.map((o) => [o.level, o.disabled])]));
+  assert.deepEqual(by.expense, [["see", false], ["use", false]]);
+  assert.deepEqual(by.inventory, [["see", true], ["use", false]]);
+  assert.deepEqual(by.leave, [["see", true], ["use", true]]);
+  assert.deepEqual(by.lms, [["learner", true], ["instructor", false]]);
+  assert.equal(groups[0].name, "Chi phí");
+  assert.equal(groups[1].options[0].note, "đang có");
+});
+
+test("togglePick: one level per miniapp", () => {
+  let p = L.togglePick({}, "inventory", "see");
+  assert.deepEqual(p, { inventory: "see" });
+  p = L.togglePick(p, "inventory", "use");
+  assert.deepEqual(p, { inventory: "use" });
+  p = L.togglePick(p, "inventory", "use");
+  assert.deepEqual(p, {});
+});
+
+test("pickList follows miniapp order", () => {
+  assert.deepEqual(L.pickList({ lms: "instructor", expense: "use" }, APPS),
+    [{ miniapp_id: "expense", level: "use" }, { miniapp_id: "lms", level: "instructor" }]);
+});
+
+test("newLogIds: first load, new rows, reset, empty", () => {
+  assert.deepEqual(L.newLogIds([{ id: 5 }, { id: 4 }], null), { ids: [], lastSeenId: 5 });
+  assert.deepEqual(L.newLogIds([{ id: 7 }, { id: 6 }, { id: 5 }], 5), { ids: [7, 6], lastSeenId: 7 });
+  assert.deepEqual(L.newLogIds([{ id: 2 }, { id: 1 }], 9), { ids: [], lastSeenId: 2 });
+  assert.deepEqual(L.newLogIds([], 9), { ids: [], lastSeenId: 0 });
+  assert.deepEqual(L.newLogIds([], null), { ids: [], lastSeenId: 0 });
+});
+
+test("actorLabel and permLogText", () => {
+  assert.equal(L.actorLabel("console"), "Thao tác tay");
+  assert.equal(L.actorLabel("agent"), "Agent");
+  assert.equal(L.actorLabel(null), "Agent");
+  assert.equal(L.permLogText({ detail: "Cấp quyền Sử dụng Kho cho user2" }), "Cấp quyền Sử dụng Kho cho user2");
+});
+
+test("parseResultRows: tab or comma, blank lines skipped, raw line numbers", () => {
+  const r = L.parseResultRows("a@x.vn, 90, a\n\nb@x.vn\t75\tB\nc@x.vn, x, C");
+  assert.deepEqual(r.rows, [{ email: "a@x.vn", score: 90, grade: "A" }, { email: "b@x.vn", score: 75, grade: "B" }]);
+  assert.deepEqual(r.errors, ["dòng 4: điểm phải là số nguyên"]);
+  assert.deepEqual(L.parseResultRows("d@x.vn").errors, ["dòng 1: cần đủ email, điểm, xếp loại"]);
+  assert.deepEqual(L.parseResultRows("  \n").rows, []);
 });
