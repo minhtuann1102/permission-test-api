@@ -2,7 +2,7 @@
 import html
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from permapp import service
+from permapp import reviews, service
 from permapp.db import get_engine, init_db, reset_db
 from permapp.service import ServiceError
 from permapp.swagger import build_swagger
@@ -99,6 +99,50 @@ class MemberIn(BaseModel):
     role: Optional[str] = ""  # member role for miniapps with roles (lms); blank = default role
 
 
+class PeriodIn(BaseModel):
+    company: str
+    kind: str  # KPI_MONTH | KPI_QUARTER | KPI_YEAR | REVIEW_360
+    year: int
+    number: Optional[int] = 0  # month (1-12) or quarter (1-4); 0 for KPI_YEAR / REVIEW_360
+    start_date: str
+    deadline: str
+    ticket: str
+
+
+class DeadlineIn(BaseModel):
+    deadline: str
+    ticket: str
+
+
+class FormReopenIn(BaseModel):
+    deadline: Optional[str] = ""  # personal deadline; required when the form's period is closed
+    ticket: str
+
+
+class EvaluatorIn(BaseModel):
+    new_email: str
+    old_email: Optional[str] = ""  # required when the form has several evaluators (360)
+    ticket: str
+
+
+class GoalIn(BaseModel):
+    title: Optional[str] = ""
+    weight: Optional[int] = 0  # 0 / blank = unchanged
+    target: Optional[str] = ""
+    ticket: str
+
+
+class ResultRowIn(BaseModel):
+    email: Optional[str] = ""
+    score: Optional[int] = None
+    grade: Optional[str] = ""
+
+
+class ResultsIn(BaseModel):
+    rows: List[ResultRowIn]
+    ticket: str
+
+
 # ---------- public ----------
 
 @app.get("/health")
@@ -166,8 +210,74 @@ code{{background:#eef;padding:0 .3em}}
 <h1>Permission Test API</h1>
 <p>Trạng thái quyền hiện tại. <b>chỉ thấy</b> = đã có quyền hệ thống (tầng 1);
 <b>dùng được</b> = đã là thành viên miniapp (tầng 2). LMS luôn hiển thị với mọi người,
-thành viên có vai trò Học viên hoặc Giảng viên. Spec: <a href="/swagger.json"><code>/swagger.json</code></a></p>
+thành viên có vai trò Học viên hoặc Giảng viên. Spec: <a href="/swagger.json"><code>/swagger.json</code></a> ·
+Hệ thống đánh giá giả lập: <a href="/reviews"><code>/reviews</code></a></p>
 <table><tr><th>Người dùng</th>{head}</tr>{''.join(rows)}</table>
+</body></html>"""
+    return HTMLResponse(body)
+
+
+def _cell(text):
+    return html.escape(str(text if text not in (None, "") else "—"))
+
+
+@app.get("/reviews", response_class=HTMLResponse, include_in_schema=False)
+def reviews_page(engine=Depends(db_engine)):
+    periods = reviews.list_periods(engine)["periods"]
+    forms = reviews.find_forms(engine)["forms"]
+    log = reviews.list_log(engine)["entries"][:30]
+    p_rows = "".join(
+        f"<tr class='{p['status'].lower()}'><td><b>{_cell(p['id'])}</b><br><small>{_cell(p['name'])}</small></td>"
+        f"<td>{_cell(p['status_label'])}</td><td>{_cell(p['start_date'])}</td><td>{_cell(p['deadline'])}</td>"
+        f"<td>{_cell(p['original_deadline'])}</td><td>{p['extension_count']}</td><td>{p['form_count']}</td>"
+        f"<td>{p['result_count']}</td></tr>"
+        for p in periods
+    )
+    f_rows = []
+    for f in forms:
+        goals = "".join(f"<li><code>{_cell(g['id'])}</code> {_cell(g['title'])} · {g['weight']}% · {_cell(g['target'])}</li>"
+                        for g in f["goals"])
+        evs = "<br>".join(f"{_cell(e['email'])} <small>({_cell(e['relation_label'])})</small>" for e in f["evaluators"])
+        gone = ' <span class="gone">Đã nghỉ việc</span>' if f["employee_status"] == "RESIGNED" else ""
+        weight = "" if f["weight_ok"] or not f["goals"] else f' <span class="warn">tổng {f["total_weight"]}%</span>'
+        f_rows.append(
+            f"<tr class='{f['status'].lower()}'><td><b>{_cell(f['id'])}</b><br><small>{_cell(f['kind_label'])}</small></td>"
+            f"<td>{_cell(f['username'])}{gone}<br><small>{_cell(f['employee_email'])}</small></td>"
+            f"<td>{_cell(f['period_id'])}</td><td>{_cell(f['status_label'])}</td><td>{_cell(f['deadline'])}</td>"
+            f"<td class='left'>{evs}</td><td class='left'><ul>{goals}</ul>{weight}</td></tr>"
+        )
+    l_rows = "".join(
+        f"<tr><td><small>{_cell(e['at'])}</small></td><td>{_cell(e['ticket'])}</td><td>{_cell(e['action'])}</td>"
+        f"<td>{_cell(e['target'])}</td><td class='left'>{_cell(e['detail'])}</td></tr>"
+        for e in log
+    ) or "<tr><td colspan='5'>Chưa có thao tác nào.</td></tr>"
+    body = f"""<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="10">
+<title>Đánh giá (giả lập)</title>
+<style>
+body{{font-family:system-ui,sans-serif;margin:2rem;color:#1d2433;background:#fafafa}}
+table{{border-collapse:collapse;background:#fff;margin-bottom:2rem}}
+th,td{{border:1px solid #d5d9e0;padding:.45rem .7rem;text-align:center;vertical-align:top}}
+th{{background:#f1f3f7}} td.left{{text-align:left}} small{{color:#6b7280}}
+ul{{margin:0;padding-left:1.1rem}} code{{background:#eef;padding:0 .3em}}
+tr.open td:nth-child(2){{background:#dcfce7}} tr.closed td:nth-child(2){{background:#fef9c3}}
+tr.locked td:nth-child(2){{background:#fee4e2}}
+tr.draft td:nth-child(4){{background:#dcfce7}} tr.submitted td:nth-child(4){{background:#e0e7ff}}
+tr.approved td:nth-child(4){{background:#fef9c3}}
+.gone{{font-size:.75rem;font-weight:600;color:#b42318;background:#fee4e2;border-radius:4px;padding:0 .35em}}
+.warn{{font-size:.8rem;color:#b54708}}
+</style></head><body>
+<h1>Đánh giá (giả lập)</h1>
+<p>Hệ thống đánh giá giả lập cho ticket <i>Đánh giá (KPI, thử việc, HĐ, 360)</i>. Chỉ đọc, tự tải lại mỗi 10 giây.
+Thao tác qua API <code>/admin/reviews/...</code> (admin key). <a href="/status">Quyền miniapp</a> ·
+<a href="/swagger.json"><code>/swagger.json</code></a></p>
+<h2>Kỳ đánh giá</h2>
+<table><tr><th>Kỳ</th><th>Trạng thái</th><th>Bắt đầu</th><th>Hạn</th><th>Hạn gốc</th><th>Số lần gia hạn</th><th>Phiếu</th><th>Kết quả HQCV</th></tr>{p_rows}</table>
+<h2>Phiếu đánh giá</h2>
+<table><tr><th>Phiếu</th><th>Nhân viên</th><th>Kỳ</th><th>Trạng thái</th><th>Hạn</th><th>Người đánh giá</th><th>Mục tiêu / tiêu chí</th></tr>{''.join(f_rows)}</table>
+<h2>Nhật ký thao tác (30 dòng gần nhất)</h2>
+<table><tr><th>Lúc (UTC)</th><th>Ticket</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr>{l_rows}</table>
 </body></html>"""
     return HTMLResponse(body)
 
@@ -261,6 +371,83 @@ def admin_eligibility(
 def admin_reset(_=Depends(require_admin), engine=Depends(db_engine)):
     reset_db(engine)
     return {"reset": True}
+
+
+# ---------- admin: Đánh giá (mock appraisal system) ----------
+
+@app.get("/admin/reviews/periods")
+def review_periods(company: Optional[str] = Query(None), status: Optional[str] = Query(None),
+                   _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.list_periods(engine, company, status)
+
+
+@app.post("/admin/reviews/periods")
+def review_create_period(body: PeriodIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.create_period(engine, body.company, body.kind, body.year, body.number,
+                                 body.start_date, body.deadline, body.ticket)
+
+
+@app.get("/admin/reviews/periods/{period_id}")
+def review_period(period_id: str, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.get_period(engine, period_id)
+
+
+@app.post("/admin/reviews/periods/{period_id}/reopen")
+def review_reopen_period(period_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.reopen_period(engine, period_id, body.deadline, body.ticket)
+
+
+@app.post("/admin/reviews/periods/{period_id}/extend")
+def review_extend_period(period_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.extend_period(engine, period_id, body.deadline, body.ticket)
+
+
+@app.post("/admin/reviews/periods/{period_id}/results")
+def review_import_results(period_id: str, body: ResultsIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.import_results(engine, period_id, [r.model_dump() for r in body.rows], body.ticket)
+
+
+@app.get("/admin/reviews/forms")
+def review_forms(email: Optional[str] = Query(None), username: Optional[str] = Query(None),
+                 period_id: Optional[str] = Query(None), kind: Optional[str] = Query(None),
+                 _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.find_forms(engine, email, username, period_id, kind)
+
+
+@app.get("/admin/reviews/forms/{form_id}")
+def review_form(form_id: str, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.get_form(engine, form_id)
+
+
+@app.post("/admin/reviews/forms/{form_id}/reopen")
+def review_reopen_form(form_id: str, body: FormReopenIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.reopen_form(engine, form_id, body.deadline, body.ticket)
+
+
+@app.post("/admin/reviews/forms/{form_id}/extend")
+def review_extend_form(form_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.extend_form(engine, form_id, body.deadline, body.ticket)
+
+
+@app.put("/admin/reviews/forms/{form_id}/evaluator")
+def review_update_evaluator(form_id: str, body: EvaluatorIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.update_evaluator(engine, form_id, body.new_email, body.old_email, body.ticket)
+
+
+@app.put("/admin/reviews/goals/{goal_id}")
+def review_update_goal(goal_id: str, body: GoalIn, _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.update_goal(engine, goal_id, body.title, body.weight, body.target, body.ticket)
+
+
+@app.delete("/admin/reviews/goals/{goal_id}")
+def review_delete_goal(goal_id: str, ticket: Optional[str] = Query(None),
+                       _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.delete_goal(engine, goal_id, ticket)
+
+
+@app.get("/admin/reviews/log")
+def review_log(ticket: Optional[str] = Query(None), _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.list_log(engine, ticket)
 
 
 # check_dir=False: if the folder were missing from a deploy, only the UI breaks, never the API.

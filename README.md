@@ -9,6 +9,19 @@ trong **Copilot Studio** tự động cấp quyền 2 tầng:
 
 Base URL: `https://permission-test-api-jvd4.vercel.app`.
 
+## Hệ thống đánh giá giả lập (Đánh giá: KPI, thử việc, HĐ, 360)
+
+Cùng API này còn giả lập **hệ thống đánh giá**, dùng để test agent xử lý nhóm ticket Đánh giá:
+
+- gia hạn, mở lại, tạo kỳ;
+- mở lại phiếu;
+- xoá, sửa mục tiêu và tiêu chí;
+- đổi người đánh giá thử việc, hợp đồng, 360;
+- upload kết quả HQCV.
+
+Phân quyền quản lý đánh giá không nằm ở đây. API có 14 thao tác `/admin/reviews/...` (admin key). Mọi thao tác ghi đều phải có số ticket SDP và được ghi nhật ký.
+Trang chỉ đọc là `/reviews`. Dữ liệu mẫu, luật và kịch bản test có trong [docs/reviews.md](docs/reviews.md).
+
 ## Giao diện demo
 
 - `/`: màn hình thao tác bằng tay, không cần agent. Thanh trên chuyển nhanh giữa **Admin**, **user1**, **user2**, **user3**.
@@ -18,6 +31,7 @@ Base URL: `https://permission-test-api-jvd4.vercel.app`.
   - user1 / user2: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
   - Tự cập nhật mỗi 3 giây; ô nào vừa đổi do agent (hoặc nơi khác) sẽ được tô sáng.
 - `/status`: bảng trạng thái quyền chỉ đọc, không cần key.
+- `/reviews`: kỳ, phiếu, mục tiêu, người đánh giá và nhật ký của hệ thống đánh giá giả lập. Chỉ đọc, không cần key.
 
 ## API key (header `X-API-Key`)
 

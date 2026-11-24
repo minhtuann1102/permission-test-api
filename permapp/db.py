@@ -85,6 +85,156 @@ role_rules = Table(
     UniqueConstraint("miniapp_id", "role", "department", "title_keyword", name="uq_role_rules"),
 )
 
+# ---------- Đánh giá (performance reviews) ----------
+# A mock of the appraisal system behind the "Đánh giá" tickets: periods (kỳ đánh giá), each employee's
+# form (phiếu) with goals/criteria (mục tiêu / tiêu chí) and evaluators (người đánh giá), uploaded
+# results (kết quả HQCV) and an audit log. Dates are ISO strings 'YYYY-MM-DD'. Blank values are "".
+
+review_periods = Table(
+    "review_periods",
+    metadata,
+    Column("id", String(64), primary_key=True),  # e.g. VINFAST-Q4-2026
+    Column("name", String(128), nullable=False),
+    Column("company", String(64), nullable=False),
+    Column("kind", String(16), nullable=False),  # KPI_MONTH | KPI_QUARTER | KPI_YEAR | REVIEW_360
+    Column("start_date", String(10), nullable=False),
+    Column("deadline", String(10), nullable=False),
+    Column("original_deadline", String(10), nullable=False),  # extensions are capped from this date
+    Column("status", String(16), nullable=False),  # OPEN | CLOSED | LOCKED (results finalised)
+    Column("extension_count", Integer, nullable=False),
+)
+
+review_forms = Table(
+    "review_forms",
+    metadata,
+    Column("id", String(32), primary_key=True),  # e.g. RF-1001
+    Column("period_id", String(64), nullable=False),  # "" for probation / contract forms
+    Column("username", String(64), nullable=False),
+    Column("kind", String(16), nullable=False),  # KPI | REVIEW_360 | PROBATION | CONTRACT
+    Column("status", String(16), nullable=False),  # DRAFT | SUBMITTED | APPROVED | LOCKED
+    Column("deadline", String(10), nullable=False),  # personal deadline; "" = the period's deadline
+    Column("base_deadline", String(10), nullable=False),  # first deadline of a form without period
+    Column("reopen_count", Integer, nullable=False),
+    Column("extension_count", Integer, nullable=False),
+)
+
+review_evaluators = Table(
+    "review_evaluators",
+    metadata,
+    Column("form_id", String(32), primary_key=True),
+    Column("email", String(254), primary_key=True),
+    Column("relation", String(16), nullable=False),  # manager | peer | subordinate
+)
+
+review_goals = Table(
+    "review_goals",
+    metadata,
+    Column("id", String(32), primary_key=True),  # e.g. G-1001-3
+    Column("form_id", String(32), nullable=False),
+    Column("title", String(256), nullable=False),
+    Column("weight", Integer, nullable=False),  # percent
+    Column("target", String(128), nullable=False),
+    Column("created_by", String(16), nullable=False),  # employee | manager
+)
+
+review_results = Table(
+    "review_results",
+    metadata,
+    Column("period_id", String(64), primary_key=True),
+    Column("username", String(64), primary_key=True),
+    Column("score", Integer, nullable=False),
+    Column("grade", String(4), nullable=False),
+)
+
+review_log = Table(
+    "review_log",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("at", String(32), nullable=False),  # UTC ISO timestamp
+    Column("ticket", String(32), nullable=False),
+    Column("action", String(64), nullable=False),  # operationId of the write
+    Column("target", String(64), nullable=False),  # period, form or goal id
+    Column("detail", String(1024), nullable=False),
+)
+
+REVIEW_TABLES = [review_log, review_results, review_goals, review_evaluators, review_forms, review_periods]
+
+
+def _period(pid, name, company, kind, start, deadline, status):
+    return {"id": pid, "name": name, "company": company, "kind": kind, "start_date": start,
+            "deadline": deadline, "original_deadline": deadline, "status": status, "extension_count": 0}
+
+
+def _form(fid, period_id, username, kind, status, deadline=""):
+    return {"id": fid, "period_id": period_id, "username": username, "kind": kind, "status": status,
+            "deadline": deadline, "base_deadline": deadline, "reopen_count": 0, "extension_count": 0}
+
+
+def _goal(gid, form_id, title, weight, target, created_by="employee"):
+    return {"id": gid, "form_id": form_id, "title": title, "weight": weight, "target": target,
+            "created_by": created_by}
+
+
+def _ev(form_id, email, relation="manager"):
+    return {"form_id": form_id, "email": email, "relation": relation}
+
+
+SEED_REVIEW_PERIODS = [
+    _period("VINFAST-Q3-2026", "KPI quý 3/2026 - VinFast", "VinFast", "KPI_QUARTER", "2026-07-01", "2026-10-15", "CLOSED"),
+    _period("VINFAST-Q4-2026", "KPI quý 4/2026 - VinFast", "VinFast", "KPI_QUARTER", "2026-10-01", "2026-11-30", "OPEN"),
+    _period("VINFAST-360-2026", "Đánh giá 360 năm 2026 - VinFast", "VinFast", "REVIEW_360", "2026-11-01", "2026-11-28", "OPEN"),
+    _period("VINHOMES-Q1-2026", "KPI quý 1/2026 - Vinhomes", "Vinhomes", "KPI_QUARTER", "2026-01-01", "2026-04-15", "LOCKED"),
+    _period("VINHOMES-Q2-2026", "KPI quý 2/2026 - Vinhomes", "Vinhomes", "KPI_QUARTER", "2026-04-01", "2026-07-15", "CLOSED"),
+    _period("VINHOMES-T11-2026", "KPI tháng 11/2026 - Vinhomes", "Vinhomes", "KPI_MONTH", "2026-11-01", "2026-12-05", "OPEN"),
+]
+
+SEED_REVIEW_FORMS = [
+    _form("RF-1001", "VINFAST-Q4-2026", "user1", "KPI", "DRAFT"),
+    _form("RF-1002", "VINFAST-Q4-2026", "user2", "KPI", "APPROVED"),
+    _form("RF-1003", "VINFAST-360-2026", "user1", "REVIEW_360", "DRAFT"),
+    _form("RF-1004", "", "user2", "PROBATION", "DRAFT", "2026-11-30"),
+    _form("RF-1005", "", "user1", "CONTRACT", "SUBMITTED", "2026-12-10"),
+    _form("RF-1006", "VINFAST-Q4-2026", "user3", "KPI", "DRAFT"),
+    _form("RF-1007", "VINHOMES-Q1-2026", "user2", "KPI", "APPROVED"),
+    _form("RF-1008", "VINHOMES-Q2-2026", "user2", "KPI", "DRAFT"),
+    _form("RF-1009", "VINHOMES-T11-2026", "user1", "KPI", "SUBMITTED"),
+]
+
+SEED_REVIEW_EVALUATORS = [
+    _ev("RF-1001", "truongphong.daotao@demo.local"),
+    _ev("RF-1002", "truongphong.kinhdoanh@demo.local"),
+    _ev("RF-1003", "truongphong.daotao@demo.local"),
+    _ev("RF-1003", "user2@demo.local", "peer"),
+    _ev("RF-1003", "nguyen.van.a@demo.local", "peer"),
+    _ev("RF-1004", "pham.van.cu@demo.local"),  # former manager, moved to another unit
+    _ev("RF-1005", "truongphong.daotao@demo.local"),
+    _ev("RF-1006", "truongphong.kinhdoanh@demo.local"),
+    _ev("RF-1007", "truongphong.kinhdoanh@demo.local"),
+    _ev("RF-1008", "truongphong.kinhdoanh@demo.local"),
+    _ev("RF-1009", "truongphong.daotao@demo.local"),
+]
+
+SEED_REVIEW_GOALS = [
+    _goal("G-1001-1", "RF-1001", "Tổ chức khóa đào tạo nội bộ", 40, "12 khóa"),
+    _goal("G-1001-2", "RF-1001", "Tỷ lệ học viên hài lòng", 40, ">= 90%"),
+    _goal("G-1001-3", "RF-1001", "Tổ chức khóa đào tạo nội bộ (tạo trùng)", 20, "12 khóa"),
+    _goal("G-1002-1", "RF-1002", "Doanh số quý 4", 50, "15 tỷ"),
+    _goal("G-1002-2", "RF-1002", "Khách hàng mới", 30, "20 khách hàng"),
+    _goal("G-1002-3", "RF-1002", "Doanh số quý 4 (nhập sai đơn vị)", 20, "15 triệu"),
+    _goal("G-1004-1", "RF-1004", "Hoàn thành đào tạo hội nhập", 30, "100%", "manager"),
+    _goal("G-1004-2", "RF-1004", "Đạt chỉ tiêu doanh số thử việc", 50, ">= 80%", "manager"),
+    _goal("G-1004-3", "RF-1004", "Tuân thủ nội quy", 20, "Không vi phạm", "manager"),
+    _goal("G-1005-1", "RF-1005", "Chất lượng công việc", 40, "Đạt", "manager"),
+    _goal("G-1005-2", "RF-1005", "Thái độ, tác phong", 30, "Đạt", "manager"),
+    _goal("G-1005-3", "RF-1005", "Kỹ năng bán hàng (sai vị trí)", 15, "Đạt", "manager"),
+    _goal("G-1005-4", "RF-1005", "Doanh số cá nhân (sai vị trí)", 15, "5 tỷ", "manager"),
+    _goal("G-1006-1", "RF-1006", "Doanh số quý 4", 100, "10 tỷ"),
+    _goal("G-1007-1", "RF-1007", "Doanh số quý 1", 100, "12 tỷ"),
+    _goal("G-1008-1", "RF-1008", "Doanh số quý 2", 70, "12 tỷ"),
+    _goal("G-1008-2", "RF-1008", "Khách hàng mới", 30, "15 khách hàng"),
+    _goal("G-1009-1", "RF-1009", "Số khóa học mở trong tháng", 100, "3 khóa"),
+]
+
 SEED_USERS = [
     {"username": "admin", "api_key": None, "role": "admin", "display_name": "Quản trị viên",
      "email": "admin@demo.local", "department": "Phòng CNTT", "title": "Quản trị hệ thống",
@@ -234,6 +384,20 @@ def _seed_role_rules(engine):
             pass  # a concurrent cold start inserted it first
 
 
+def _seed_reviews(engine):
+    """Seed the review tables once, while they are empty (new tables on an old database, or after reset)."""
+    try:
+        with engine.begin() as c:
+            if c.execute(select(review_periods.c.id)).first() is not None:
+                return
+            c.execute(review_periods.insert(), SEED_REVIEW_PERIODS)
+            c.execute(review_forms.insert(), SEED_REVIEW_FORMS)
+            c.execute(review_evaluators.insert(), SEED_REVIEW_EVALUATORS)
+            c.execute(review_goals.insert(), SEED_REVIEW_GOALS)
+    except IntegrityError:
+        pass  # a concurrent cold start seeded it first
+
+
 def init_db(engine):
     _create_schema(engine)
     for table_name, column, sql_type in LATE_COLUMNS:
@@ -247,10 +411,11 @@ def init_db(engine):
     with engine.begin() as c:  # memberships granted before roles existed have no role
         c.execute(update(miniapp_grants).where(miniapp_grants.c.role.is_(None)).values(role=""))
     _seed_role_rules(engine)
+    _seed_reviews(engine)
 
 
 def reset_db(engine):
-    """Remove every grant and restore seed users, miniapps and eligibility rules to their seed values."""
+    """Remove every grant and restore seed users, miniapps, eligibility rules and review data."""
     _create_schema(engine)
     for table_name, column, sql_type in LATE_COLUMNS:
         _ensure_column(engine, table_name, column, sql_type)
@@ -258,6 +423,8 @@ def reset_db(engine):
         c.execute(delete(miniapp_grants))
         c.execute(delete(system_grants))
         c.execute(delete(role_rules))
+        for table in REVIEW_TABLES:
+            c.execute(delete(table))
         for row in _seed_users():
             c.execute(update(users).where(users.c.username == row["username"]).values(**row))
         for row in SEED_MINIAPPS:

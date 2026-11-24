@@ -18,6 +18,19 @@ def _bool(desc):
     return {"type": "boolean", "description": desc}
 
 
+def _int(desc):
+    return {"type": "integer", "format": "int32", "description": desc}
+
+
+def _arr(item, desc):
+    return {"type": "array", "items": item, "description": desc}
+
+
+RESULT_DESC = ("DONE (the change was made) or NO_CHANGE (it was already so, nothing written). "
+               "Rule violations are 4xx errors instead, never a result value.")
+MESSAGE_DESC = "One Vietnamese sentence describing what happened. Can be shown to the technician as is."
+
+
 DEFINITIONS = {
     "Error": {
         "type": "object",
@@ -27,7 +40,11 @@ DEFINITIONS = {
             "code": _str(
                 "Machine-readable error code: UNAUTHORIZED, ADMIN_REQUIRED, NOT_VISIBLE, NOT_MEMBER, "
                 "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, NOT_ELIGIBLE, INVALID_ROLE, "
-                "VALIDATION_ERROR, NOT_FOUND."
+                "VALIDATION_ERROR, NOT_FOUND. Đánh giá (reviews): TICKET_REQUIRED, INVALID_DATE, "
+                "INVALID_KIND, INVALID_DEADLINE, DEADLINE_REQUIRED, EXTENSION_TOO_LONG, PERIOD_NOT_FOUND, "
+                "PERIOD_EXISTS, PERIOD_ALREADY_OPEN, PERIOD_OPEN, PERIOD_CLOSED, PERIOD_LOCKED, FORM_NOT_FOUND, "
+                "FORM_APPROVED, FORM_LOCKED, EMPLOYEE_RESIGNED, GOAL_NOT_FOUND, EVALUATOR_NOT_FOUND, "
+                "EVALUATOR_DUPLICATE, EVALUATOR_RESIGNED, OLD_EVALUATOR_REQUIRED, SELF_EVALUATOR, INVALID_ROWS."
             ),
         },
     },
@@ -176,6 +193,173 @@ DEFINITIONS = {
         },
     },
     "Reset": {"type": "object", "properties": {"reset": _bool("Always true.")}},
+    # ---------- Đánh giá (reviews) ----------
+    "ReviewPeriod": {
+        "type": "object",
+        "properties": {
+            "id": _str("Period id, e.g. 'VINFAST-Q4-2026', 'VINHOMES-T11-2026', 'VINFAST-360-2026'."),
+            "name": _str("Display name, e.g. 'KPI quý 4/2026 - VinFast'."),
+            "company": _str("Company / unit, e.g. 'VinFast'."),
+            "kind": _str("KPI_MONTH, KPI_QUARTER, KPI_YEAR or REVIEW_360."),
+            "kind_label": _str("Vietnamese label of kind."),
+            "start_date": _str("Start date, YYYY-MM-DD."),
+            "deadline": _str("Current deadline, YYYY-MM-DD."),
+            "original_deadline": _str("Deadline before any extension (or the deadline set when reopened)."),
+            "max_deadline": _str("Latest deadline an extension may set (original_deadline + 30 days)."),
+            "status": _str("OPEN (đang mở), CLOSED (đã đóng, can be reopened) or LOCKED (đã chốt kết quả, final)."),
+            "status_label": _str("Vietnamese label of status."),
+            "extension_count": _int("How many times the deadline was extended."),
+            "form_count": _int("Number of employee forms in this period."),
+            "result_count": _int("Number of uploaded results (kết quả HQCV)."),
+        },
+    },
+    "ReviewPeriodList": {"type": "object", "properties": {"periods": _arr(_ref("ReviewPeriod"), "Review periods.")}},
+    "ReviewEvaluator": {
+        "type": "object",
+        "properties": {
+            "email": _str("Evaluator email."),
+            "relation": _str("manager, peer or subordinate."),
+            "relation_label": _str("Vietnamese label of relation."),
+        },
+    },
+    "ReviewGoal": {
+        "type": "object",
+        "properties": {
+            "id": _str("Goal / criterion id, e.g. 'G-1001-3'."),
+            "title": _str("Goal (mục tiêu) or criterion (tiêu chí) text."),
+            "weight": _int("Weight in percent."),
+            "target": _str("Target value, e.g. '12 khóa'."),
+            "created_by": _str("employee (created by the employee) or manager."),
+        },
+    },
+    "ReviewForm": {
+        "type": "object",
+        "properties": {
+            "id": _str("Form id, e.g. 'RF-1001'."),
+            "kind": _str("KPI, REVIEW_360, PROBATION (thử việc) or CONTRACT (hết hạn hợp đồng)."),
+            "kind_label": _str("Vietnamese label of kind."),
+            "period_id": _str("Period id. Empty for PROBATION and CONTRACT forms."),
+            "period_name": _str("Period name. Empty if no period."),
+            "period_status": _str("Status of the period (OPEN, CLOSED, LOCKED). Empty if no period."),
+            "username": _str("Employee username."),
+            "employee_name": _str("Employee display name."),
+            "employee_email": _str("Employee email."),
+            "employee_status": _str("ACTIVE or RESIGNED. Forms of RESIGNED employees cannot be changed."),
+            "status": _str("DRAFT (đang nhập), SUBMITTED (đã nộp), APPROVED (đã phê duyệt) or LOCKED (đã chốt)."),
+            "status_label": _str("Vietnamese label of status."),
+            "deadline": _str("Deadline that applies to this form, YYYY-MM-DD."),
+            "personal_deadline": _str("Personal deadline overriding the period's. Empty if none."),
+            "max_deadline": _str("Latest deadline ExtendReviewForm may set."),
+            "reopen_count": _int("How many times the form was reopened."),
+            "extension_count": _int("How many times the form deadline was extended."),
+            "evaluators": _arr(_ref("ReviewEvaluator"), "Evaluators (người đánh giá). 360 forms have several."),
+            "goals": _arr(_ref("ReviewGoal"), "Goals / criteria on the form."),
+            "total_weight": _int("Sum of goal weights in percent."),
+            "weight_ok": _bool("True if total_weight is 100."),
+        },
+    },
+    "ReviewFormList": {"type": "object", "properties": {"forms": _arr(_ref("ReviewForm"), "Matching forms.")}},
+    "ReviewLogEntry": {
+        "type": "object",
+        "properties": {
+            "id": _int("Entry id."),
+            "at": _str("UTC timestamp."),
+            "ticket": _str("SDP ticket, e.g. '#54'."),
+            "action": _str("Operation, e.g. 'DeleteReviewGoal'."),
+            "target": _str("Period, form or goal id."),
+            "detail": _str("What changed (Vietnamese)."),
+        },
+    },
+    "ReviewLog": {"type": "object", "properties": {"entries": _arr(_ref("ReviewLogEntry"), "Newest first, at most 200.")}},
+    "ReviewPeriodIn": {
+        "type": "object",
+        "required": ["company", "kind", "year", "start_date", "deadline", "ticket"],
+        "properties": {
+            "company": _str("Company / unit, e.g. 'Vinhomes'. The period id is built from it."),
+            "kind": _str("KPI_MONTH, KPI_QUARTER, KPI_YEAR or REVIEW_360."),
+            "year": _int("Year, e.g. 2026."),
+            "number": _int("Month 1-12 for KPI_MONTH, quarter 1-4 for KPI_QUARTER, 0 otherwise."),
+            "start_date": _str("Start date YYYY-MM-DD."),
+            "deadline": _str("Deadline YYYY-MM-DD, after start_date."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewDeadlineIn": {
+        "type": "object",
+        "required": ["deadline", "ticket"],
+        "properties": {
+            "deadline": _str("New deadline YYYY-MM-DD."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewFormReopenIn": {
+        "type": "object",
+        "required": ["ticket"],
+        "properties": {
+            "deadline": _str("Personal deadline YYYY-MM-DD. Required when the form's period is CLOSED; "
+                             "otherwise leave empty."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewEvaluatorIn": {
+        "type": "object",
+        "required": ["new_email", "ticket"],
+        "properties": {
+            "new_email": _str("Email of the new evaluator."),
+            "old_email": _str("Email of the evaluator to replace. Required for forms with several evaluators "
+                              "(360); may be empty when the form has one evaluator."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewGoalIn": {
+        "type": "object",
+        "required": ["ticket"],
+        "properties": {
+            "title": _str("New text. Empty = unchanged."),
+            "weight": _int("New weight 1-100. 0 = unchanged."),
+            "target": _str("New target. Empty = unchanged."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewResultRow": {
+        "type": "object",
+        "properties": {
+            "email": _str("Employee email."),
+            "score": _int("Score 0-100."),
+            "grade": _str("Grade A, B, C or D."),
+        },
+    },
+    "ReviewResultsIn": {
+        "type": "object",
+        "required": ["rows", "ticket"],
+        "properties": {
+            "rows": _arr(_ref("ReviewResultRow"), "One row per employee."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
+        },
+    },
+    "ReviewPeriodChange": {
+        "type": "object",
+        "properties": {"result": _str(RESULT_DESC), "message": _str(MESSAGE_DESC), "period": _ref("ReviewPeriod")},
+    },
+    "ReviewFormChange": {
+        "type": "object",
+        "properties": {"result": _str(RESULT_DESC), "message": _str(MESSAGE_DESC), "form": _ref("ReviewForm")},
+    },
+    "ReviewGoalChange": {
+        "type": "object",
+        "properties": {
+            "result": _str(RESULT_DESC), "message": _str(MESSAGE_DESC),
+            "goal": _ref("ReviewGoal"), "form": _ref("ReviewForm"),
+        },
+    },
+    "ReviewResultsImport": {
+        "type": "object",
+        "properties": {
+            "result": _str(RESULT_DESC), "message": _str(MESSAGE_DESC),
+            "imported": _int("Rows imported."), "replaced": _int("Rows that overwrote an earlier result."),
+            "period": _ref("ReviewPeriod"),
+        },
+    },
 }
 
 ADMIN_KEY_PARAM = {
@@ -207,6 +391,9 @@ def _body(schema_name, desc):
     return {"name": "body", "in": "body", "required": True, "description": desc, "schema": _ref(schema_name)}
 
 
+PERIOD_PATH = _path("period_id", "Review period id, e.g. 'VINFAST-Q4-2026'. Find it with ListReviewPeriods.")
+FORM_PATH = _path("form_id", "Review form id, e.g. 'RF-1001'. Find it with FindReviewForms.")
+GOAL_PATH = _path("goal_id", "Goal / criterion id, e.g. 'G-1001-3'. Read it from the form's goals.")
 MINIAPP_PATH = _path("miniapp_id", "Miniapp id, e.g. 'leave', 'expense', 'inventory' or 'lms'.")
 USERNAME_PATH = _path("username", "Username, e.g. 'user1'.")
 
@@ -241,7 +428,196 @@ E403_GRANT = {"403": _err(
 GRANT_ERRORS = {**E401, **E403_GRANT}
 
 
+TICKET_RULE = "Needs the SDP ticket number (TICKET_REQUIRED otherwise); every change is logged with it. "
+E404_PERIOD = {"404": _err("Unknown period id (PERIOD_NOT_FOUND).")}
+E404_FORM = {"404": _err("Unknown form id (FORM_NOT_FOUND), or old_email is not an evaluator (EVALUATOR_NOT_FOUND).")}
+E422_REVIEW = {"422": _err("Bad input: TICKET_REQUIRED, INVALID_DATE, INVALID_DEADLINE (not after the current "
+                           "deadline), EXTENSION_TOO_LONG, DEADLINE_REQUIRED or VALIDATION_ERROR. detail says what to fix.")}
+
+
+def _review_paths():
+    return {
+        "/admin/reviews/periods": {
+            "get": _op(
+                "ListReviewPeriods", "List review periods (kỳ đánh giá)",
+                "Admin only (admin key). Lists review periods with status, deadline and the latest allowed "
+                "extension (max_deadline). Filter by company (e.g. 'VinFast') and status (OPEN, CLOSED, LOCKED). "
+                "Use to find the period_id named in a ticket such as 'kỳ đánh giá quý 2.2026'.",
+                [ADMIN_KEY_PARAM, _query("company", "Company, e.g. 'VinFast'. Empty = all.", required=False),
+                 _query("status", "OPEN, CLOSED or LOCKED. Empty = all.", required=False)],
+                "ReviewPeriodList", "Review periods.", ADMIN_ERRORS,
+            ),
+            "post": _op(
+                "CreateReviewPeriod", "Create a review period",
+                "Admin only (admin key). Creates an OPEN period; its id is built as COMPANY-Qn-YEAR, "
+                "COMPANY-Tn-YEAR, COMPANY-Y-YEAR or COMPANY-360-YEAR. An existing id returns 409 PERIOD_EXISTS: "
+                "extend or reopen it instead. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, _body("ReviewPeriodIn", "The period to create.")],
+                "ReviewPeriodChange", "Period created.",
+                {**ADMIN_ERRORS, "409": _err("The period already exists (PERIOD_EXISTS)."),
+                 "422": _err("Bad input: INVALID_KIND, INVALID_DATE, TICKET_REQUIRED or VALIDATION_ERROR.")},
+            ),
+        },
+        "/admin/reviews/periods/{period_id}": {
+            "get": _op(
+                "GetReviewPeriod", "Get a review period",
+                "Admin only (admin key). Returns one period with its status, deadlines and counts.",
+                [ADMIN_KEY_PARAM, PERIOD_PATH], "ReviewPeriod", "The period.", {**ADMIN_ERRORS, **E404_PERIOD},
+            )
+        },
+        "/admin/reviews/periods/{period_id}/reopen": {
+            "post": _op(
+                "ReopenReviewPeriod", "Reopen a closed review period for everyone",
+                "Admin only (admin key). CLOSED -> OPEN with a new deadline after the old one, for every "
+                "employee in the period. To reopen for ONE employee use ReopenReviewForm instead. "
+                "LOCKED periods (results finalised) cannot be reopened (409 PERIOD_LOCKED); an OPEN period "
+                "returns 409 PERIOD_ALREADY_OPEN (use ExtendReviewPeriod). " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
+                "ReviewPeriodChange", "Period reopened.",
+                {**ADMIN_ERRORS, **E404_PERIOD, **E422_REVIEW,
+                 "409": _err("PERIOD_LOCKED or PERIOD_ALREADY_OPEN. Nothing was changed.")},
+            )
+        },
+        "/admin/reviews/periods/{period_id}/extend": {
+            "post": _op(
+                "ExtendReviewPeriod", "Extend the deadline of an open review period",
+                "Admin only (admin key). Moves the deadline of an OPEN period later, for every employee. "
+                "The new deadline must be after the current one and at most 30 days after the original "
+                "deadline (max_deadline), otherwise 422 EXTENSION_TOO_LONG. CLOSED periods return 409 "
+                "PERIOD_CLOSED (use ReopenReviewPeriod), LOCKED ones 409 PERIOD_LOCKED. Same deadline = "
+                "NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
+                "ReviewPeriodChange", "Deadline extended, or NO_CHANGE.",
+                {**ADMIN_ERRORS, **E404_PERIOD, **E422_REVIEW,
+                 "409": _err("PERIOD_CLOSED or PERIOD_LOCKED. Nothing was changed.")},
+            )
+        },
+        "/admin/reviews/periods/{period_id}/results": {
+            "post": _op(
+                "ImportReviewResults", "Upload work performance results (kết quả HQCV)",
+                "Admin only (admin key). Uploads score (0-100) and grade (A-D) per employee email into a CLOSED "
+                "period; an employee who already has a result is overwritten. All or nothing: one bad row "
+                "rejects the whole upload with 422 INVALID_ROWS listing every bad row. OPEN periods return 409 "
+                "PERIOD_OPEN, LOCKED ones 409 PERIOD_LOCKED. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewResultsIn", "Result rows and ticket.")],
+                "ReviewResultsImport", "Results imported.",
+                {**ADMIN_ERRORS, **E404_PERIOD,
+                 "409": _err("PERIOD_OPEN or PERIOD_LOCKED. Nothing was imported."),
+                 "422": _err("INVALID_ROWS (detail lists each bad row), TICKET_REQUIRED or VALIDATION_ERROR.")},
+            )
+        },
+        "/admin/reviews/forms": {
+            "get": _op(
+                "FindReviewForms", "Find an employee's review forms (phiếu đánh giá)",
+                "Admin only (admin key). Lists forms with status, deadline, evaluators and goals/criteria (with "
+                "their ids and weights). Filter by employee email (the person in the ticket), username, "
+                "period_id and kind (KPI, REVIEW_360, PROBATION, CONTRACT). Use this FIRST to find the form_id "
+                "and goal ids before any change. Unknown email returns 404 USER_NOT_FOUND: do not guess.",
+                [ADMIN_KEY_PARAM,
+                 _query("email", "Employee email, e.g. 'user2@demo.local'.", required=False),
+                 _query("username", "Employee username, e.g. 'user2'.", required=False),
+                 _query("period_id", "Period id, e.g. 'VINFAST-Q4-2026'.", required=False),
+                 _query("kind", "KPI, REVIEW_360, PROBATION or CONTRACT.", required=False)],
+                "ReviewFormList", "Matching forms (may be empty).",
+                {**ADMIN_ERRORS, "404": _err("No employee has this email (USER_NOT_FOUND).")},
+            )
+        },
+        "/admin/reviews/forms/{form_id}": {
+            "get": _op(
+                "GetReviewForm", "Get a review form",
+                "Admin only (admin key). Returns one form with evaluators and goals. Use after a change to confirm it.",
+                [ADMIN_KEY_PARAM, FORM_PATH], "ReviewForm", "The form.", {**ADMIN_ERRORS, **E404_FORM},
+            )
+        },
+        "/admin/reviews/forms/{form_id}/reopen": {
+            "post": _op(
+                "ReopenReviewForm", "Reopen one employee's form",
+                "Admin only (admin key). Sets the form back to DRAFT so the employee can edit it again "
+                "('mở lại phiếu', 'mở hệ thống đánh giá KPI'). If the form's period is CLOSED, pass a personal "
+                "deadline: this reopens the period for this employee only (422 DEADLINE_REQUIRED without it). "
+                "Blocked for RESIGNED employees (409 EMPLOYEE_RESIGNED) and LOCKED periods or forms (409 "
+                "PERIOD_LOCKED / FORM_LOCKED). Already DRAFT and nothing to change = NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewFormReopenIn", "Optional personal deadline and ticket.")],
+                "ReviewFormChange", "Form reopened, or NO_CHANGE.",
+                {**ADMIN_ERRORS, **E404_FORM, **E422_REVIEW,
+                 "409": _err("EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was changed.")},
+            )
+        },
+        "/admin/reviews/forms/{form_id}/extend": {
+            "post": _op(
+                "ExtendReviewForm", "Extend one employee's form deadline",
+                "Admin only (admin key). Gives one form (KPI, 360, probation or contract) a later personal "
+                "deadline, at most max_deadline (30 days after the original deadline), otherwise 422 "
+                "EXTENSION_TOO_LONG. APPROVED forms return 409 FORM_APPROVED; a form in a CLOSED period returns "
+                "409 PERIOD_CLOSED (use ReopenReviewForm with a deadline). Blocked for RESIGNED employees and "
+                "LOCKED periods or forms. Same deadline = NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
+                "ReviewFormChange", "Deadline extended, or NO_CHANGE.",
+                {**ADMIN_ERRORS, **E404_FORM, **E422_REVIEW,
+                 "409": _err("FORM_APPROVED, PERIOD_CLOSED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED.")},
+            )
+        },
+        "/admin/reviews/forms/{form_id}/evaluator": {
+            "put": _op(
+                "UpdateReviewEvaluator", "Change the evaluator of a form",
+                "Admin only (admin key). Replaces an evaluator (người đánh giá), e.g. the manager on a probation "
+                "or contract form, or one rater on a 360 form, keeping the relation. For forms with several "
+                "evaluators (360) old_email is required (422 OLD_EVALUATOR_REQUIRED). The employee cannot "
+                "evaluate themself (422 SELF_EVALUATOR); a resigned person cannot evaluate (422 "
+                "EVALUATOR_RESIGNED); someone already on the form returns 409 EVALUATOR_DUPLICATE. APPROVED "
+                "forms return 409 FORM_APPROVED. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewEvaluatorIn", "New (and old) evaluator email and ticket.")],
+                "ReviewFormChange", "Evaluator changed, or NO_CHANGE.",
+                {**ADMIN_ERRORS, **E404_FORM,
+                 "409": _err("FORM_APPROVED, EVALUATOR_DUPLICATE, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED."),
+                 "422": _err("OLD_EVALUATOR_REQUIRED, SELF_EVALUATOR, EVALUATOR_RESIGNED, TICKET_REQUIRED or "
+                             "VALIDATION_ERROR.")},
+            )
+        },
+        "/admin/reviews/goals/{goal_id}": {
+            "put": _op(
+                "UpdateReviewGoal", "Edit a goal or criterion",
+                "Admin only (admin key). Changes the text, weight or target of a goal (mục tiêu KPI) or criterion "
+                "(tiêu chí thử việc / hợp đồng). Empty fields stay unchanged. The goal's form must not be "
+                "APPROVED (409 FORM_APPROVED: reopen it first with ReopenReviewForm) or LOCKED, and the "
+                "employee must not be RESIGNED. message warns when the weights no longer add up to 100%. "
+                + TICKET_RULE,
+                [ADMIN_KEY_PARAM, GOAL_PATH, _body("ReviewGoalIn", "Fields to change and ticket.")],
+                "ReviewGoalChange", "Goal edited, or NO_CHANGE.",
+                {**ADMIN_ERRORS, "404": _err("Unknown goal id (GOAL_NOT_FOUND)."),
+                 "409": _err("FORM_APPROVED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was changed."),
+                 "422": _err("TICKET_REQUIRED or VALIDATION_ERROR (weight not 1-100).")},
+            ),
+            "delete": _op(
+                "DeleteReviewGoal", "Delete a goal or criterion",
+                "Admin only (admin key). Deletes one goal or criterion created by mistake ('xóa tiêu chí do NLĐ "
+                "tạo sai'). Call once per goal. The goal's form must not be APPROVED (409 FORM_APPROVED: reopen it "
+                "first with ReopenReviewForm) or LOCKED, and the employee must not be RESIGNED. message warns "
+                "when the remaining weights no longer add up to 100%. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, GOAL_PATH, _query("ticket", "SDP ticket number, e.g. '#54'. Required.")],
+                "ReviewGoalChange", "Goal deleted.",
+                {**ADMIN_ERRORS, "404": _err("Unknown goal id (GOAL_NOT_FOUND)."),
+                 "409": _err("FORM_APPROVED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was deleted."),
+                 "422": _err("TICKET_REQUIRED.")},
+            ),
+        },
+        "/admin/reviews/log": {
+            "get": _op(
+                "ListReviewLog", "List the review change log",
+                "Admin only (admin key). Every change made through the review operations, newest first, with "
+                "ticket, operation, target and detail. Filter by ticket to show what was done for one ticket.",
+                [ADMIN_KEY_PARAM, _query("ticket", "SDP ticket number, e.g. '#54'. Empty = all.", required=False)],
+                "ReviewLog", "Log entries.", {**ADMIN_ERRORS, "422": _err("The ticket filter is not a ticket number (TICKET_REQUIRED).")},
+            )
+        },
+    }
+
+
 def _paths():
+    return {**_permission_paths(), **_review_paths()}
+
+
+def _permission_paths():
     return {
         "/health": {
             "get": {
@@ -396,7 +772,8 @@ def _paths():
             "post": _op(
                 "ResetAll", "Reset all permissions",
                 "Admin only (admin key). Removes every system access and membership and restores the "
-                "seeded users and miniapps. Call only when explicitly asked to reset the test data.",
+                "seeded users and miniapps, and restores the review data (periods, forms, goals, evaluators) "
+                "and clears review results and the review log. Call only when explicitly asked to reset the test data.",
                 [ADMIN_KEY_PARAM], "Reset", "All permissions cleared.", ADMIN_ERRORS,
             )
         },
@@ -424,7 +801,10 @@ def build_swagger(host):
                 "(AddMiniappMember). The mock LMS (lms) is always visible and its members have a role: "
                 "learner or instructor. Grants are blocked (403 NOT_ELIGIBLE) "
                 "for users who are not eligible: call CheckEligibility first. Admin operations (/admin/...) use the admin API key in X-API-Key; "
-                "user operations (/me..., UseMiniapp) use that user's own key to verify the result."
+                "user operations (/me..., UseMiniapp) use that user's own key to verify the result. "
+                "It also mocks an appraisal system (Đánh giá, /admin/reviews/...): review periods, each "
+                "employee's KPI / 360 / probation / contract form with goals and evaluators, result uploads and "
+                "a change log. Every review change needs an SDP ticket number."
             ),
         },
         "host": clean_host(host),
