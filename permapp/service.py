@@ -326,6 +326,57 @@ def grant_membership(engine, miniapp_id, username, role="", actor="agent"):
     return {"username": username, "miniapp_id": miniapp_id, "role": role, "already_granted": already}
 
 
+_RANK = {"none": 0, "see": 1, "use": 2}
+
+
+def _grant_one(engine, username, miniapp_id, level, actor):
+    """One console pick in its own transaction: see | use | <role>. Never lowers use to see."""
+    try:
+        with engine.begin() as c:
+            app = _miniapp_row(c, miniapp_id)
+            user = _user_row(c, username)
+            allowed = app["roles"] or ["see", "use"]
+            if level not in allowed:
+                raise ServiceError(422, "INVALID_LEVEL",
+                                   f"Mức quyền '{level}' không hợp lệ cho {app['name']} (chọn: {', '.join(allowed)})")
+            before = level_of(c, username, app)
+            role = level if app["roles"] else ""
+            _require_eligible(c, user, app, role)
+            if app["roles"]:
+                if _member_role(c, username, miniapp_id) is None:
+                    c.execute(miniapp_grants.insert().values(username=username, miniapp_id=miniapp_id, role=role))
+                elif before != role:
+                    c.execute(update(miniapp_grants).where(and_(
+                        miniapp_grants.c.username == username, miniapp_grants.c.miniapp_id == miniapp_id,
+                    )).values(role=role))
+            elif _RANK[before] < _RANK[level]:
+                if not app["always_visible"] and not _has(c, system_grants, username, miniapp_id):
+                    c.execute(system_grants.insert().values(username=username, miniapp_id=miniapp_id))
+                if level == "use":
+                    c.execute(miniapp_grants.insert().values(username=username, miniapp_id=miniapp_id, role=""))
+            after = _record(c, username, app, before, actor)
+        return {"ok": True, "changed": after != before, "from_level": before, "to_level": after,
+                "code": "", "detail": ""}
+    except ServiceError as e:
+        return {"ok": False, "changed": False, "from_level": "", "to_level": "", "code": e.code, "detail": e.detail}
+    except IntegrityError:  # a concurrent identical grant won the race
+        return {"ok": True, "changed": False, "from_level": "", "to_level": "", "code": "", "detail": ""}
+
+
+def grant_permissions(engine, username, items, actor="agent"):
+    """Console multi-grant: each pick applied on its own, so one refusal does not undo the others."""
+    username = (username or "").strip()
+    with engine.connect() as c:
+        _user_row(c, username)
+    results = []
+    for item in items or []:
+        miniapp_id = (item.get("miniapp_id") or "").strip()
+        level = (item.get("level") or "").strip().lower()
+        results.append({"miniapp_id": miniapp_id, "level": level,
+                        **_grant_one(engine, username, miniapp_id, level, actor)})
+    return {"username": username, "results": results}
+
+
 def revoke_system_access(engine, username, miniapp_id, actor="agent"):
     with engine.begin() as c:
         app = _miniapp_row(c, miniapp_id)

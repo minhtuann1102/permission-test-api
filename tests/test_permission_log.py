@@ -79,3 +79,59 @@ def test_reset_clears_permission_log(client):
     _sys(client, "user1", "leave")
     client.post("/admin/reset", headers=ADMIN)
     assert _log(client) == []
+
+
+# ---------- multi-grant (console) ----------
+
+def _grants(client, user, items, headers=ADMIN):
+    return client.post(f"/admin/users/{user}/grants",
+                       json={"grants": [{"miniapp_id": m, "level": lv} for m, lv in items]}, headers=headers)
+
+
+def _results(r):
+    assert r.status_code == 200, r.json()
+    return r.json()["results"]
+
+
+def test_grants_use_is_one_row(client):
+    [res] = _results(_grants(client, "user2", [("expense", "use")]))
+    assert res["ok"] and res["changed"] and (res["from_level"], res["to_level"]) == ("none", "use")
+    assert _rows(client) == [("Grant", "none", "use", "agent")]
+    check = client.get("/admin/check", params={"username": "user2", "miniapp_id": "expense"}, headers=ADMIN).json()
+    assert check["can_use"] is True
+
+
+def test_grants_partial_success(client):
+    res = _results(_grants(client, "user2", [("expense", "use"), ("lms", "instructor"), ("inventory", "see")]))
+    assert [r["ok"] for r in res] == [True, False, True]
+    assert res[1]["code"] == "NOT_ELIGIBLE" and res[1]["detail"]
+    assert [r["miniapp_id"] for r in res] == ["expense", "lms", "inventory"]
+    assert [e["miniapp_id"] for e in _log(client)] == ["inventory", "expense"]
+
+
+def test_grants_never_downgrade(client):
+    _results(_grants(client, "user1", [("leave", "use")]))
+    [res] = _results(_grants(client, "user1", [("leave", "see")]))
+    assert res["ok"] is True and res["changed"] is False and res["to_level"] == "use"
+    assert len(_log(client)) == 1
+
+
+def test_grants_lms_role_both_ways(client):
+    _results(_grants(client, "user1", [("lms", "instructor")]))
+    [res] = _results(_grants(client, "user1", [("lms", "learner")]))
+    assert (res["from_level"], res["to_level"]) == ("instructor", "learner")
+    assert _rows(client)[0] == ("ChangeRole", "instructor", "learner", "agent")
+
+
+def test_grants_invalid_level_and_unknown_user(client):
+    [res] = _results(_grants(client, "user1", [("leave", "learner")]))
+    assert res["ok"] is False and res["code"] == "INVALID_LEVEL"
+    [res] = _results(_grants(client, "user1", [("lms", "see")]))
+    assert res["code"] == "INVALID_LEVEL"
+    r = _grants(client, "ghost", [("leave", "use")])
+    assert r.status_code == 404 and r.json()["code"] == "USER_NOT_FOUND"
+
+
+def test_grants_console_actor(client):
+    _results(_grants(client, "user1", [("leave", "see")], headers=CONSOLE))
+    assert _rows(client) == [("Grant", "none", "see", "console")]

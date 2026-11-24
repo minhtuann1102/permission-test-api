@@ -104,6 +104,15 @@ class MemberIn(BaseModel):
     role: Optional[str] = ""  # member role for miniapps with roles (lms); blank = default role
 
 
+class GrantItemIn(BaseModel):
+    miniapp_id: str
+    level: str  # see | use | <member role>
+
+
+class GrantsIn(BaseModel):
+    grants: List[GrantItemIn]
+
+
 class PeriodIn(BaseModel):
     company: str
     kind: str  # KPI_MONTH | KPI_QUARTER | KPI_YEAR | REVIEW_360
@@ -374,6 +383,13 @@ def admin_eligibility(
 ):
     """Always 200: a 'not eligible' answer is data for the agent, not a tool failure."""
     return service.check_eligibility(engine, username, miniapp_id, role, approver_email)
+
+
+@app.post("/admin/users/{username}/grants")
+def grant_permissions(username: str, body: GrantsIn, _=Depends(require_admin), engine=Depends(db_engine),
+                      who=Depends(actor)):
+    """Console only (not in swagger): several permissions for one user, one result per pick."""
+    return service.grant_permissions(engine, username, [g.model_dump() for g in body.grants], who)
 
 
 @app.get("/admin/permission-log")
