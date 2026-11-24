@@ -40,7 +40,7 @@ DEFINITIONS = {
             "code": _str(
                 "Machine-readable error code: UNAUTHORIZED, ADMIN_REQUIRED, NOT_VISIBLE, NOT_MEMBER, "
                 "USER_NOT_FOUND, MINIAPP_NOT_FOUND, SYSTEM_ACCESS_REQUIRED, NOT_ELIGIBLE, INVALID_ROLE, "
-                "VALIDATION_ERROR, NOT_FOUND. Đánh giá (reviews): INVALID_DATE, "
+                "VALIDATION_ERROR, NOT_FOUND. Đánh giá (reviews): TICKET_REQUIRED, INVALID_DATE, "
                 "INVALID_KIND, INVALID_DEADLINE, DEADLINE_REQUIRED, EXTENSION_TOO_LONG, PERIOD_NOT_FOUND, "
                 "PERIOD_EXISTS, PERIOD_ALREADY_OPEN, PERIOD_OPEN, PERIOD_CLOSED, PERIOD_LOCKED, FORM_NOT_FOUND, "
                 "FORM_APPROVED, FORM_LOCKED, EMPLOYEE_RESIGNED, GOAL_NOT_FOUND, EVALUATOR_NOT_FOUND, "
@@ -264,6 +264,7 @@ DEFINITIONS = {
         "properties": {
             "id": _int("Entry id."),
             "at": _str("UTC timestamp."),
+            "ticket": _str("SDP ticket, e.g. '#54'. Empty for changes made by hand on the operator screen."),
             "actor": _str("Who made the change: agent, or console (by hand on the operator screen)."),
             "action": _str("Operation, e.g. 'DeleteReviewGoal'."),
             "target": _str("Period, form or goal id."),
@@ -273,7 +274,7 @@ DEFINITIONS = {
     "ReviewLog": {"type": "object", "properties": {"entries": _arr(_ref("ReviewLogEntry"), "Newest first, at most 200.")}},
     "ReviewPeriodIn": {
         "type": "object",
-        "required": ["company", "kind", "year", "start_date", "deadline"],
+        "required": ["company", "kind", "year", "start_date", "deadline", "ticket"],
         "properties": {
             "company": _str("Company / unit, e.g. 'Vinhomes'. The period id is built from it."),
             "kind": _str("KPI_MONTH, KPI_QUARTER, KPI_YEAR or REVIEW_360."),
@@ -281,37 +282,44 @@ DEFINITIONS = {
             "number": _int("Month 1-12 for KPI_MONTH, quarter 1-4 for KPI_QUARTER, 0 otherwise."),
             "start_date": _str("Start date YYYY-MM-DD."),
             "deadline": _str("Deadline YYYY-MM-DD, after start_date."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewDeadlineIn": {
         "type": "object",
-        "required": ["deadline"],
+        "required": ["deadline", "ticket"],
         "properties": {
             "deadline": _str("New deadline YYYY-MM-DD."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewFormReopenIn": {
         "type": "object",
+        "required": ["ticket"],
         "properties": {
             "deadline": _str("Personal deadline YYYY-MM-DD. Required when the form's period is CLOSED; "
                              "otherwise leave empty."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewEvaluatorIn": {
         "type": "object",
-        "required": ["new_email"],
+        "required": ["new_email", "ticket"],
         "properties": {
             "new_email": _str("Email of the new evaluator."),
             "old_email": _str("Email of the evaluator to replace. Required for forms with several evaluators "
                               "(360); may be empty when the form has one evaluator."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewGoalIn": {
         "type": "object",
+        "required": ["ticket"],
         "properties": {
             "title": _str("New text. Empty = unchanged."),
             "weight": _int("New weight 1-100. 0 = unchanged."),
             "target": _str("New target. Empty = unchanged."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewResultRow": {
@@ -324,9 +332,10 @@ DEFINITIONS = {
     },
     "ReviewResultsIn": {
         "type": "object",
-        "required": ["rows"],
+        "required": ["rows", "ticket"],
         "properties": {
             "rows": _arr(_ref("ReviewResultRow"), "One row per employee."),
+            "ticket": _str("SDP ticket number, e.g. '#54'. Required."),
         },
     },
     "ReviewPeriodChange": {
@@ -420,10 +429,10 @@ E403_GRANT = {"403": _err(
 GRANT_ERRORS = {**E401, **E403_GRANT}
 
 
-LOG_RULE = "Every change is written to the review change log (ListReviewLog). "
+TICKET_RULE = "Needs the SDP ticket number (TICKET_REQUIRED otherwise); every change is logged with it. "
 E404_PERIOD = {"404": _err("Unknown period id (PERIOD_NOT_FOUND).")}
 E404_FORM = {"404": _err("Unknown form id (FORM_NOT_FOUND), or old_email is not an evaluator (EVALUATOR_NOT_FOUND).")}
-E422_REVIEW = {"422": _err("Bad input: INVALID_DATE, INVALID_DEADLINE (not after the current "
+E422_REVIEW = {"422": _err("Bad input: TICKET_REQUIRED, INVALID_DATE, INVALID_DEADLINE (not after the current "
                            "deadline), EXTENSION_TOO_LONG, DEADLINE_REQUIRED or VALIDATION_ERROR. detail says what to fix.")}
 
 
@@ -443,11 +452,11 @@ def _review_paths():
                 "CreateReviewPeriod", "Create a review period",
                 "Admin only (admin key). Creates an OPEN period; its id is built as COMPANY-Qn-YEAR, "
                 "COMPANY-Tn-YEAR, COMPANY-Y-YEAR or COMPANY-360-YEAR. An existing id returns 409 PERIOD_EXISTS: "
-                "extend or reopen it instead. " + LOG_RULE,
+                "extend or reopen it instead. " + TICKET_RULE,
                 [ADMIN_KEY_PARAM, _body("ReviewPeriodIn", "The period to create.")],
                 "ReviewPeriodChange", "Period created.",
                 {**ADMIN_ERRORS, "409": _err("The period already exists (PERIOD_EXISTS)."),
-                 "422": _err("Bad input: INVALID_KIND, INVALID_DATE or VALIDATION_ERROR.")},
+                 "422": _err("Bad input: INVALID_KIND, INVALID_DATE, TICKET_REQUIRED or VALIDATION_ERROR.")},
             ),
         },
         "/admin/reviews/periods/{period_id}": {
@@ -463,8 +472,8 @@ def _review_paths():
                 "Admin only (admin key). CLOSED -> OPEN with a new deadline after the old one, for every "
                 "employee in the period. To reopen for ONE employee use ReopenReviewForm instead. "
                 "LOCKED periods (results finalised) cannot be reopened (409 PERIOD_LOCKED); an OPEN period "
-                "returns 409 PERIOD_ALREADY_OPEN (use ExtendReviewPeriod). " + LOG_RULE,
-                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline.")],
+                "returns 409 PERIOD_ALREADY_OPEN (use ExtendReviewPeriod). " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
                 "ReviewPeriodChange", "Period reopened.",
                 {**ADMIN_ERRORS, **E404_PERIOD, **E422_REVIEW,
                  "409": _err("PERIOD_LOCKED or PERIOD_ALREADY_OPEN. Nothing was changed.")},
@@ -477,8 +486,8 @@ def _review_paths():
                 "The new deadline must be after the current one and at most 30 days after the original "
                 "deadline (max_deadline), otherwise 422 EXTENSION_TOO_LONG. CLOSED periods return 409 "
                 "PERIOD_CLOSED (use ReopenReviewPeriod), LOCKED ones 409 PERIOD_LOCKED. Same deadline = "
-                "NO_CHANGE. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline.")],
+                "NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
                 "ReviewPeriodChange", "Deadline extended, or NO_CHANGE.",
                 {**ADMIN_ERRORS, **E404_PERIOD, **E422_REVIEW,
                  "409": _err("PERIOD_CLOSED or PERIOD_LOCKED. Nothing was changed.")},
@@ -490,12 +499,12 @@ def _review_paths():
                 "Admin only (admin key). Uploads score (0-100) and grade (A-D) per employee email into a CLOSED "
                 "period; an employee who already has a result is overwritten. All or nothing: one bad row "
                 "rejects the whole upload with 422 INVALID_ROWS listing every bad row. OPEN periods return 409 "
-                "PERIOD_OPEN, LOCKED ones 409 PERIOD_LOCKED. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewResultsIn", "Result rows.")],
+                "PERIOD_OPEN, LOCKED ones 409 PERIOD_LOCKED. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, PERIOD_PATH, _body("ReviewResultsIn", "Result rows and ticket.")],
                 "ReviewResultsImport", "Results imported.",
                 {**ADMIN_ERRORS, **E404_PERIOD,
                  "409": _err("PERIOD_OPEN or PERIOD_LOCKED. Nothing was imported."),
-                 "422": _err("INVALID_ROWS (detail lists each bad row) or VALIDATION_ERROR.")},
+                 "422": _err("INVALID_ROWS (detail lists each bad row), TICKET_REQUIRED or VALIDATION_ERROR.")},
             )
         },
         "/admin/reviews/forms": {
@@ -528,8 +537,8 @@ def _review_paths():
                 "('mở lại phiếu', 'mở hệ thống đánh giá KPI'). If the form's period is CLOSED, pass a personal "
                 "deadline: this reopens the period for this employee only (422 DEADLINE_REQUIRED without it). "
                 "Blocked for RESIGNED employees (409 EMPLOYEE_RESIGNED) and LOCKED periods or forms (409 "
-                "PERIOD_LOCKED / FORM_LOCKED). Already DRAFT and nothing to change = NO_CHANGE. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewFormReopenIn", "Optional personal deadline.")],
+                "PERIOD_LOCKED / FORM_LOCKED). Already DRAFT and nothing to change = NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewFormReopenIn", "Optional personal deadline and ticket.")],
                 "ReviewFormChange", "Form reopened, or NO_CHANGE.",
                 {**ADMIN_ERRORS, **E404_FORM, **E422_REVIEW,
                  "409": _err("EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was changed.")},
@@ -542,8 +551,8 @@ def _review_paths():
                 "deadline, at most max_deadline (30 days after the original deadline), otherwise 422 "
                 "EXTENSION_TOO_LONG. APPROVED forms return 409 FORM_APPROVED; a form in a CLOSED period returns "
                 "409 PERIOD_CLOSED (use ReopenReviewForm with a deadline). Blocked for RESIGNED employees and "
-                "LOCKED periods or forms. Same deadline = NO_CHANGE. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewDeadlineIn", "New deadline.")],
+                "LOCKED periods or forms. Same deadline = NO_CHANGE. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewDeadlineIn", "New deadline and ticket.")],
                 "ReviewFormChange", "Deadline extended, or NO_CHANGE.",
                 {**ADMIN_ERRORS, **E404_FORM, **E422_REVIEW,
                  "409": _err("FORM_APPROVED, PERIOD_CLOSED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED.")},
@@ -557,12 +566,12 @@ def _review_paths():
                 "evaluators (360) old_email is required (422 OLD_EVALUATOR_REQUIRED). The employee cannot "
                 "evaluate themself (422 SELF_EVALUATOR); a resigned person cannot evaluate (422 "
                 "EVALUATOR_RESIGNED); someone already on the form returns 409 EVALUATOR_DUPLICATE. APPROVED "
-                "forms return 409 FORM_APPROVED. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewEvaluatorIn", "New (and old) evaluator email.")],
+                "forms return 409 FORM_APPROVED. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, FORM_PATH, _body("ReviewEvaluatorIn", "New (and old) evaluator email and ticket.")],
                 "ReviewFormChange", "Evaluator changed, or NO_CHANGE.",
                 {**ADMIN_ERRORS, **E404_FORM,
                  "409": _err("FORM_APPROVED, EVALUATOR_DUPLICATE, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED."),
-                 "422": _err("OLD_EVALUATOR_REQUIRED, SELF_EVALUATOR, EVALUATOR_RESIGNED or "
+                 "422": _err("OLD_EVALUATOR_REQUIRED, SELF_EVALUATOR, EVALUATOR_RESIGNED, TICKET_REQUIRED or "
                              "VALIDATION_ERROR.")},
             )
         },
@@ -573,33 +582,35 @@ def _review_paths():
                 "(tiêu chí thử việc / hợp đồng). Empty fields stay unchanged. The goal's form must not be "
                 "APPROVED (409 FORM_APPROVED: reopen it first with ReopenReviewForm) or LOCKED, and the "
                 "employee must not be RESIGNED. message warns when the weights no longer add up to 100%. "
-                + LOG_RULE,
-                [ADMIN_KEY_PARAM, GOAL_PATH, _body("ReviewGoalIn", "Fields to change.")],
+                + TICKET_RULE,
+                [ADMIN_KEY_PARAM, GOAL_PATH, _body("ReviewGoalIn", "Fields to change and ticket.")],
                 "ReviewGoalChange", "Goal edited, or NO_CHANGE.",
                 {**ADMIN_ERRORS, "404": _err("Unknown goal id (GOAL_NOT_FOUND)."),
                  "409": _err("FORM_APPROVED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was changed."),
-                 "422": _err("VALIDATION_ERROR (weight not 1-100).")},
+                 "422": _err("TICKET_REQUIRED or VALIDATION_ERROR (weight not 1-100).")},
             ),
             "delete": _op(
                 "DeleteReviewGoal", "Delete a goal or criterion",
                 "Admin only (admin key). Deletes one goal or criterion created by mistake ('xóa tiêu chí do NLĐ "
                 "tạo sai'). Call once per goal. The goal's form must not be APPROVED (409 FORM_APPROVED: reopen it "
                 "first with ReopenReviewForm) or LOCKED, and the employee must not be RESIGNED. message warns "
-                "when the remaining weights no longer add up to 100%. " + LOG_RULE,
-                [ADMIN_KEY_PARAM, GOAL_PATH],
+                "when the remaining weights no longer add up to 100%. " + TICKET_RULE,
+                [ADMIN_KEY_PARAM, GOAL_PATH, _query("ticket", "SDP ticket number, e.g. '#54'. Required.")],
                 "ReviewGoalChange", "Goal deleted.",
                 {**ADMIN_ERRORS, "404": _err("Unknown goal id (GOAL_NOT_FOUND)."),
-                 "409": _err("FORM_APPROVED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was deleted.")},
+                 "409": _err("FORM_APPROVED, EMPLOYEE_RESIGNED, PERIOD_LOCKED or FORM_LOCKED. Nothing was deleted."),
+                 "422": _err("TICKET_REQUIRED.")},
             ),
         },
         "/admin/reviews/log": {
             "get": _op(
                 "ListReviewLog", "List the review change log",
                 "Admin only (admin key). Every change made through the review operations or by hand on the "
-                "operator screen, newest first, with who made it (actor), operation, target and detail. Filter by "
-                "target (a period, form or goal id) to check what was done to it.",
-                [ADMIN_KEY_PARAM, _query("target", "Period, form or goal id, e.g. 'RF-1002'. Empty = all.", required=False)],
-                "ReviewLog", "Log entries.", ADMIN_ERRORS,
+                "operator screen, newest first, with ticket, who made it (actor), operation, target and detail. "
+                "Filter by ticket to show what was done for one ticket, or by target (period, form or goal id).",
+                [ADMIN_KEY_PARAM, _query("ticket", "SDP ticket number, e.g. '#54'. Empty = all.", required=False),
+                 _query("target", "Period, form or goal id, e.g. 'RF-1002'. Empty = all.", required=False)],
+                "ReviewLog", "Log entries.", {**ADMIN_ERRORS, "422": _err("The ticket filter is not a ticket number (TICKET_REQUIRED).")},
             )
         },
     }
@@ -796,7 +807,7 @@ def build_swagger(host):
                 "user operations (/me..., UseMiniapp) use that user's own key to verify the result. "
                 "It also mocks an appraisal system (Đánh giá, /admin/reviews/...): review periods, each "
                 "employee's KPI / 360 / probation / contract form with goals and evaluators, result uploads and "
-                "a change log."
+                "a change log. Every review change needs an SDP ticket number."
             ),
         },
         "host": clean_host(host),

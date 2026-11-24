@@ -19,7 +19,7 @@ Cùng API này còn giả lập **hệ thống đánh giá**, dùng để test a
 - đổi người đánh giá thử việc, hợp đồng, 360;
 - upload kết quả HQCV.
 
-Phân quyền quản lý đánh giá không nằm ở đây. API có 14 thao tác `/admin/reviews/...` (admin key). Giống hệ thống thật, API không nhận số ticket. Mọi thay đổi được ghi nhật ký kèm người làm: *Agent* hoặc *Thao tác tay* (màn hình `/`).
+Phân quyền quản lý đánh giá không nằm ở đây. API có 14 thao tác `/admin/reviews/...` (admin key). Mọi thao tác ghi của agent đều phải có số ticket SDP. Màn hình thao tác tay ở `/` không có ô ticket, giống hệ thống thật. Mọi thay đổi được ghi nhật ký kèm người làm (*Agent* hoặc *Thao tác tay*) và ticket nếu có.
 Trang chỉ đọc là `/reviews`. Dữ liệu mẫu, luật và kịch bản test có trong [docs/reviews.md](docs/reviews.md).
 
 ## Giao diện demo

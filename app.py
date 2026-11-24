@@ -120,25 +120,30 @@ class PeriodIn(BaseModel):
     number: Optional[int] = 0  # month (1-12) or quarter (1-4); 0 for KPI_YEAR / REVIEW_360
     start_date: str
     deadline: str
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 class DeadlineIn(BaseModel):
     deadline: str
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 class FormReopenIn(BaseModel):
     deadline: Optional[str] = ""  # personal deadline; required when the form's period is closed
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 class EvaluatorIn(BaseModel):
     new_email: str
     old_email: Optional[str] = ""  # required when the form has several evaluators (360)
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 class GoalIn(BaseModel):
     title: Optional[str] = ""
     weight: Optional[int] = 0  # 0 / blank = unchanged
     target: Optional[str] = ""
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 class ResultRowIn(BaseModel):
@@ -149,6 +154,7 @@ class ResultRowIn(BaseModel):
 
 class ResultsIn(BaseModel):
     rows: List[ResultRowIn]
+    ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
 
 
 # ---------- public ----------
@@ -255,10 +261,11 @@ def reviews_page(engine=Depends(db_engine)):
             f"<td class='left'>{evs}</td><td class='left'><ul>{goals}</ul>{weight}</td></tr>"
         )
     l_rows = "".join(
-        f"<tr><td><small>{_cell(e['at'])}</small></td><td>{'Thao tác tay' if e['actor'] == 'console' else 'Agent'}</td><td>{_cell(e['action'])}</td>"
+        f"<tr><td><small>{_cell(e['at'])}</small></td><td>{'Thao tác tay' if e['actor'] == 'console' else 'Agent'}</td>"
+        f"<td>{_cell(e['ticket'])}</td><td>{_cell(e['action'])}</td>"
         f"<td>{_cell(e['target'])}</td><td class='left'>{_cell(e['detail'])}</td></tr>"
         for e in log
-    ) or "<tr><td colspan='5'>Chưa có thao tác nào.</td></tr>"
+    ) or "<tr><td colspan='6'>Chưa có thao tác nào.</td></tr>"
     body = f"""<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="10">
@@ -285,7 +292,7 @@ Thao tác bằng tay ở <a href="/?as=admin&amp;section=reviews">màn hình Đ�
 <h2>Phiếu đánh giá</h2>
 <table><tr><th>Phiếu</th><th>Nhân viên</th><th>Kỳ</th><th>Trạng thái</th><th>Hạn</th><th>Người đánh giá</th><th>Mục tiêu / tiêu chí</th></tr>{''.join(f_rows)}</table>
 <h2>Nhật ký thao tác (30 dòng gần nhất)</h2>
-<table><tr><th>Lúc (UTC)</th><th>Người làm</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr>{l_rows}</table>
+<table><tr><th>Lúc (UTC)</th><th>Người làm</th><th>Ticket</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr>{l_rows}</table>
 </body></html>"""
     return HTMLResponse(body)
 
@@ -409,7 +416,7 @@ def review_periods(company: Optional[str] = Query(None), status: Optional[str] =
 @app.post("/admin/reviews/periods")
 def review_create_period(body: PeriodIn, _=Depends(require_admin), engine=Depends(db_engine), who=Depends(actor)):
     return reviews.create_period(engine, body.company, body.kind, body.year, body.number,
-                                 body.start_date, body.deadline, who)
+                                 body.start_date, body.deadline, body.ticket, who)
 
 
 @app.get("/admin/reviews/periods/{period_id}")
@@ -420,19 +427,19 @@ def review_period(period_id: str, _=Depends(require_admin), engine=Depends(db_en
 @app.post("/admin/reviews/periods/{period_id}/reopen")
 def review_reopen_period(period_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine),
                          who=Depends(actor)):
-    return reviews.reopen_period(engine, period_id, body.deadline, who)
+    return reviews.reopen_period(engine, period_id, body.deadline, body.ticket, who)
 
 
 @app.post("/admin/reviews/periods/{period_id}/extend")
 def review_extend_period(period_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine),
                          who=Depends(actor)):
-    return reviews.extend_period(engine, period_id, body.deadline, who)
+    return reviews.extend_period(engine, period_id, body.deadline, body.ticket, who)
 
 
 @app.post("/admin/reviews/periods/{period_id}/results")
 def review_import_results(period_id: str, body: ResultsIn, _=Depends(require_admin), engine=Depends(db_engine),
                           who=Depends(actor)):
-    return reviews.import_results(engine, period_id, [r.model_dump() for r in body.rows], who)
+    return reviews.import_results(engine, period_id, [r.model_dump() for r in body.rows], body.ticket, who)
 
 
 @app.get("/admin/reviews/forms")
@@ -450,35 +457,37 @@ def review_form(form_id: str, _=Depends(require_admin), engine=Depends(db_engine
 @app.post("/admin/reviews/forms/{form_id}/reopen")
 def review_reopen_form(form_id: str, body: FormReopenIn, _=Depends(require_admin), engine=Depends(db_engine),
                        who=Depends(actor)):
-    return reviews.reopen_form(engine, form_id, body.deadline, who)
+    return reviews.reopen_form(engine, form_id, body.deadline, body.ticket, who)
 
 
 @app.post("/admin/reviews/forms/{form_id}/extend")
 def review_extend_form(form_id: str, body: DeadlineIn, _=Depends(require_admin), engine=Depends(db_engine),
                        who=Depends(actor)):
-    return reviews.extend_form(engine, form_id, body.deadline, who)
+    return reviews.extend_form(engine, form_id, body.deadline, body.ticket, who)
 
 
 @app.put("/admin/reviews/forms/{form_id}/evaluator")
 def review_update_evaluator(form_id: str, body: EvaluatorIn, _=Depends(require_admin), engine=Depends(db_engine),
                             who=Depends(actor)):
-    return reviews.update_evaluator(engine, form_id, body.new_email, body.old_email, who)
+    return reviews.update_evaluator(engine, form_id, body.new_email, body.old_email, body.ticket, who)
 
 
 @app.put("/admin/reviews/goals/{goal_id}")
 def review_update_goal(goal_id: str, body: GoalIn, _=Depends(require_admin), engine=Depends(db_engine),
                        who=Depends(actor)):
-    return reviews.update_goal(engine, goal_id, body.title, body.weight, body.target, who)
+    return reviews.update_goal(engine, goal_id, body.title, body.weight, body.target, body.ticket, who)
 
 
 @app.delete("/admin/reviews/goals/{goal_id}")
-def review_delete_goal(goal_id: str, _=Depends(require_admin), engine=Depends(db_engine), who=Depends(actor)):
-    return reviews.delete_goal(engine, goal_id, who)
+def review_delete_goal(goal_id: str, ticket: Optional[str] = Query(None), _=Depends(require_admin),
+                       engine=Depends(db_engine), who=Depends(actor)):
+    return reviews.delete_goal(engine, goal_id, ticket, who)
 
 
 @app.get("/admin/reviews/log")
-def review_log(target: Optional[str] = Query(None), _=Depends(require_admin), engine=Depends(db_engine)):
-    return reviews.list_log(engine, target)
+def review_log(ticket: Optional[str] = Query(None), target: Optional[str] = Query(None),
+               _=Depends(require_admin), engine=Depends(db_engine)):
+    return reviews.list_log(engine, ticket, target)
 
 
 # check_dir=False: if the folder were missing from a deploy, only the UI breaks, never the API.

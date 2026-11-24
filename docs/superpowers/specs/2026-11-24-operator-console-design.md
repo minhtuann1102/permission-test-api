@@ -16,6 +16,12 @@ Real systems are not told about SDP tickets: the technician reads the ticket in 
 in the system. So **no ticket number anywhere in either system**, including the review API, which
 currently requires one.
 
+> **Amendment (after first deploy, user-decided):** the ticket is removed from the **operator screen only**.
+> The agent still must send the SDP ticket on every review write (`TICKET_REQUIRED` otherwise) and it is
+> logged; requests with `X-Client: console` need none and log `ticket = ""`. The review swagger is back to
+> requiring `ticket`, plus `actor` on log entries and a `target` filter on `ListReviewLog`. Sections below
+> that say "no ticket anywhere" are superseded by this note.
+
 ## Goals
 - Admin screen **Phân quyền miniapp**: user picker, multi-select permission dropdown, one Grant
   button, per-permission results, revoke from the user's current permissions, live change log.

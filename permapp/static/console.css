@@ -156,6 +156,7 @@
 .log__row.is-changed { background: var(--color-accent-wash); }
 .log__meta { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); font-variant-numeric: tabular-nums; }
 .log__text { color: var(--color-ink); overflow-wrap: anywhere; }
+.log__ticket { color: var(--color-ink-2); font-weight: 500; }
 .log__delta { color: var(--color-muted); }
 .actor { display: inline-block; padding: 0 var(--space-xs); border-radius: var(--radius-pill); font: 600 var(--text-xs)/1.6 var(--font-display); }
 .actor--console { background: var(--color-paper-3); color: var(--color-ink-2); }

@@ -84,13 +84,15 @@ def test_check_eligibility_documented_and_grants_mention_both_403_codes():
         assert {"department", "title", "manager_email", "status"} <= set(spec["definitions"][d]["properties"])
 
 
-def test_no_ticket_or_client_header_in_spec():
-    """The system takes no ticket (the agent only reads tickets for context); X-Client is console-only."""
+def test_agent_ticket_in_spec_but_not_client_header():
+    """The agent's tools keep the required ticket; X-Client is console-only and never in the spec."""
     spec = build_swagger("h")
-    for ops in spec["paths"].values():
-        for op in ops.values():
-            assert all(p["name"] not in ("ticket", "X-Client") for p in op["parameters"]), op["operationId"]
-    for name, d in spec["definitions"].items():
-        assert "ticket" not in d.get("properties", {}) and "ticket" not in d.get("required", []), name
-    text = json.dumps(spec)
-    assert "TICKET_REQUIRED" not in text and "X-Client" not in text
+    defs = spec["definitions"]
+    for name in ("ReviewPeriodIn", "ReviewDeadlineIn", "ReviewFormReopenIn", "ReviewEvaluatorIn", "ReviewGoalIn", "ReviewResultsIn"):
+        assert "ticket" in defs[name]["required"], name
+    assert {"ticket", "actor"} <= set(defs["ReviewLogEntry"]["properties"])
+    delete = spec["paths"]["/admin/reviews/goals/{goal_id}"]["delete"]
+    assert any(p["name"] == "ticket" and p["required"] for p in delete["parameters"])
+    log = spec["paths"]["/admin/reviews/log"]["get"]
+    assert {p["name"] for p in log["parameters"]} >= {"ticket", "target"}
+    assert "X-Client" not in json.dumps(spec)

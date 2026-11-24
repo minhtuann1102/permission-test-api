@@ -1,7 +1,8 @@
 """Mock appraisal system (Đánh giá): periods, forms, goals, evaluators, results. No HTTP here.
 
-Rules live here so the API, not the agent, decides what is allowed. Like the real system it knows
-nothing about SDP tickets. Every change is written to review_log with who made it (console | agent).
+Rules live here so the API, not the agent, decides what is allowed. Every change is written to review_log
+with who made it (console | agent). The agent must give the SDP ticket number it works on (logged with
+the change); the operator screen, like the real system, has no ticket field.
 Writes return {"result": "DONE" | "NO_CHANGE", "message", ...};
 rule violations raise ServiceError (4xx) with a Vietnamese detail that says what to do instead.
 """
@@ -35,6 +36,7 @@ FORM_STATUS = {"DRAFT": "Đang nhập", "SUBMITTED": "Đã nộp, chờ phê duy
 RELATIONS = {"manager": "Quản lý trực tiếp", "peer": "Đồng nghiệp", "subordinate": "Cấp dưới"}
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_TICKET = re.compile(r"^#?\s*(\d+)$")
 
 
 # ---------- small helpers ----------
@@ -42,6 +44,16 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def _s(value):
     return (value or "").strip() if isinstance(value, str) or value is None else str(value).strip()
 
+
+
+def _ticket(value, actor):
+    """'#54' for the agent (required); "" for the operator screen, which has no ticket field."""
+    if actor == "console":
+        return ""
+    m = _TICKET.match(_s(value))
+    if not m:
+        raise ServiceError(422, "TICKET_REQUIRED", "Thiếu số ticket SDP (ví dụ '#54'). Mọi thao tác ghi của agent đều phải gắn ticket.")
+    return "#" + m.group(1)
 
 
 def _date(value, field):
@@ -57,10 +69,10 @@ def _vn(d):
     return d.strftime("%d/%m/%Y")
 
 
-def _log(conn, actor, action, target, detail):
+def _log(conn, actor, ticket, action, target, detail):
     conn.execute(review_log.insert().values(
         at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        ticket="",  # kept in the schema for old databases; the system knows nothing about tickets
+        ticket=ticket,
         actor=actor if actor in ("console", "agent") else "agent",
         action=action, target=target, detail=detail[:1024],
     ))
@@ -197,10 +209,12 @@ def get_form(engine, form_id):
         return _form_out(c, _form_row(c, form_id))
 
 
-def list_log(engine, target=""):
-    cols = (review_log.c.id, review_log.c.at, review_log.c.actor, review_log.c.action,
+def list_log(engine, ticket="", target=""):
+    cols = (review_log.c.id, review_log.c.at, review_log.c.ticket, review_log.c.actor, review_log.c.action,
             review_log.c.target, review_log.c.detail)
     q = select(*cols).order_by(review_log.c.id.desc()).limit(200)
+    if _s(ticket):
+        q = q.where(review_log.c.ticket == _ticket(ticket, "agent"))
     if _s(target):
         q = q.where(review_log.c.target == _s(target))
     with engine.connect() as c:
@@ -216,7 +230,8 @@ def _slug(company):
     return code
 
 
-def create_period(engine, company, kind, year, number, start_date, deadline, actor="agent"):
+def create_period(engine, company, kind, year, number, start_date, deadline, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     kind = _s(kind).upper()
     if kind not in PERIOD_KINDS:
         raise ServiceError(422, "INVALID_KIND", f"kind phải là một trong: {', '.join(PERIOD_KINDS)}")
@@ -246,14 +261,15 @@ def create_period(engine, company, kind, year, number, start_date, deadline, act
             if c.execute(select(review_periods.c.id).where(review_periods.c.id == pid)).first():
                 raise ServiceError(409, "PERIOD_EXISTS", f"Kỳ {pid} đã có, không tạo trùng. Muốn đổi hạn thì gia hạn hoặc mở lại kỳ.")
             c.execute(review_periods.insert().values(**row))
-            _log(c, actor, "CreateReviewPeriod", pid, f"Tạo {row['name']}, {_vn(start)} - {_vn(end)}")
+            _log(c, actor, ticket, "CreateReviewPeriod", pid, f"Tạo {row['name']}, {_vn(start)} - {_vn(end)}")
             out = _period_out(c, row)
     except IntegrityError:
         raise ServiceError(409, "PERIOD_EXISTS", f"Kỳ {pid} đã có, không tạo trùng.") from None
     return _done(f"Đã tạo kỳ {row['name']} ({pid}), mở từ {_vn(start)} đến {_vn(end)}.", period=out)
 
 
-def reopen_period(engine, period_id, deadline, actor="agent"):
+def reopen_period(engine, period_id, deadline, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     new = _date(deadline, "deadline")
     with engine.begin() as c:
         p = _period_row(c, period_id)
@@ -266,12 +282,13 @@ def reopen_period(engine, period_id, deadline, actor="agent"):
             raise ServiceError(422, "INVALID_DEADLINE", f"Hạn mới phải sau hạn cũ {_vn(p['deadline'])}.")
         c.execute(update(review_periods).where(review_periods.c.id == p["id"])
                   .values(status="OPEN", deadline=new.isoformat(), original_deadline=new.isoformat()))
-        _log(c, actor, "ReopenReviewPeriod", p["id"], f"Mở lại kỳ, hạn {_vn(p['deadline'])} -> {_vn(new)}")
+        _log(c, actor, ticket, "ReopenReviewPeriod", p["id"], f"Mở lại kỳ, hạn {_vn(p['deadline'])} -> {_vn(new)}")
         out = _period_out(c, _period_row(c, p["id"]))
     return _done(f"Đã mở lại kỳ {p['name']}, hạn mới {_vn(new)}.", period=out)
 
 
-def extend_period(engine, period_id, deadline, actor="agent"):
+def extend_period(engine, period_id, deadline, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     new = _date(deadline, "deadline")
     with engine.begin() as c:
         p = _period_row(c, period_id)
@@ -290,13 +307,14 @@ def extend_period(engine, period_id, deadline, actor="agent"):
                                f"Chỉ gia hạn tối đa {MAX_EXTENSION_DAYS} ngày so với hạn gốc, tức đến {_vn(cap)}.")
         c.execute(update(review_periods).where(review_periods.c.id == p["id"])
                   .values(deadline=new.isoformat(), extension_count=p["extension_count"] + 1))
-        _log(c, actor, "ExtendReviewPeriod", p["id"], f"Gia hạn kỳ {_vn(old)} -> {_vn(new)}")
+        _log(c, actor, ticket, "ExtendReviewPeriod", p["id"], f"Gia hạn kỳ {_vn(old)} -> {_vn(new)}")
         out = _period_out(c, _period_row(c, p["id"]))
     return _done(f"Đã gia hạn kỳ {p['name']} từ {_vn(old)} đến {_vn(new)}.", period=out)
 
 
-def import_results(engine, period_id, rows, actor="agent"):
+def import_results(engine, period_id, rows, ticket="", actor="agent"):
     """All or nothing: any bad row rejects the whole upload, so nothing half-imported is left behind."""
+    ticket = _ticket(ticket, actor)
     rows = rows or []
     if not rows:
         raise ServiceError(422, "VALIDATION_ERROR", "rows: danh sách kết quả đang trống")
@@ -332,7 +350,7 @@ def import_results(engine, period_id, rows, actor="agent"):
                 review_results.c.period_id == r["period_id"], review_results.c.username == r["username"])))
             replaced += res.rowcount
             c.execute(review_results.insert().values(**r))
-        _log(c, actor, "ImportReviewResults", p["id"], f"Tải {len(clean)} kết quả HQCV ({replaced} dòng ghi đè)")
+        _log(c, actor, ticket, "ImportReviewResults", p["id"], f"Tải {len(clean)} kết quả HQCV ({replaced} dòng ghi đè)")
         out = _period_out(c, p)
     return _done(f"Đã tải {len(clean)} kết quả HQCV vào kỳ {p['name']}"
                  + (f", trong đó {replaced} người đã có kết quả cũ và được ghi đè." if replaced else "."),
@@ -352,9 +370,10 @@ def _editable(form, period, employee, action):
         raise ServiceError(409, "FORM_LOCKED", f"Phiếu {form['id']} đã chốt, không {action}.")
 
 
-def reopen_form(engine, form_id, deadline, actor="agent"):
+def reopen_form(engine, form_id, deadline, ticket="", actor="agent"):
     """Back to DRAFT so the employee can edit again ('mở lại phiếu'). A form whose period is closed needs
     a personal deadline: that reopens the period for this employee only."""
+    ticket = _ticket(ticket, actor)
     with engine.begin() as c:
         f = _form_row(c, form_id)
         period, emp = _form_ctx(c, f)
@@ -378,13 +397,14 @@ def reopen_form(engine, form_id, deadline, actor="agent"):
             return _no_change(f"Phiếu {f['id']} đang ở trạng thái {FORM_STATUS['DRAFT']}, nhân viên sửa được ngay.",
                               form=_form_out(c, f))
         c.execute(update(review_forms).where(review_forms.c.id == f["id"]).values(**changes))
-        _log(c, actor, "ReopenReviewForm", f["id"], "Mở lại phiếu: " + ", ".join(notes))
+        _log(c, actor, ticket, "ReopenReviewForm", f["id"], "Mở lại phiếu: " + ", ".join(notes))
         out = _form_out(c, _form_row(c, f["id"]))
     return _done(f"Đã mở lại {FORM_KINDS[f['kind']].lower()} {f['id']} của {emp['display_name']}: "
                  + ", ".join(notes) + ".", form=out)
 
 
-def extend_form(engine, form_id, deadline, actor="agent"):
+def extend_form(engine, form_id, deadline, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     new = _date(deadline, "deadline")
     with engine.begin() as c:
         f = _form_row(c, form_id)
@@ -407,13 +427,14 @@ def extend_form(engine, form_id, deadline, actor="agent"):
                                f"Chỉ gia hạn tối đa {MAX_EXTENSION_DAYS} ngày so với hạn gốc, tức đến {_vn(cap)}.")
         c.execute(update(review_forms).where(review_forms.c.id == f["id"])
                   .values(deadline=new.isoformat(), extension_count=f["extension_count"] + 1))
-        _log(c, actor, "ExtendReviewForm", f["id"], f"Gia hạn phiếu {_vn(old)} -> {_vn(new)}")
+        _log(c, actor, ticket, "ExtendReviewForm", f["id"], f"Gia hạn phiếu {_vn(old)} -> {_vn(new)}")
         out = _form_out(c, _form_row(c, f["id"]))
     return _done(f"Đã gia hạn {FORM_KINDS[f['kind']].lower()} {f['id']} của {emp['display_name']} "
                  f"từ {_vn(old)} đến {_vn(new)}.", form=out)
 
 
-def update_evaluator(engine, form_id, new_email, old_email, actor="agent"):
+def update_evaluator(engine, form_id, new_email, old_email, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     new, old = _s(new_email).lower(), _s(old_email).lower()
     if not _EMAIL.match(new):
         raise ServiceError(422, "VALIDATION_ERROR", f"new_email: '{new}' không phải email hợp lệ")
@@ -450,7 +471,7 @@ def update_evaluator(engine, form_id, new_email, old_email, actor="agent"):
             c.execute(delete(review_evaluators).where(and_(
                 review_evaluators.c.form_id == f["id"], review_evaluators.c.email == old)))
         c.execute(review_evaluators.insert().values(form_id=f["id"], email=new, relation=relation))
-        _log(c, actor, "UpdateReviewEvaluator", f["id"], f"Người đánh giá ({relation}): {old or '(trống)'} -> {new}")
+        _log(c, actor, ticket, "UpdateReviewEvaluator", f["id"], f"Người đánh giá ({relation}): {old or '(trống)'} -> {new}")
         out = _form_out(c, _form_row(c, f["id"]))
     return _done(f"Đã đổi người đánh giá {RELATIONS.get(relation, relation).lower()} của phiếu {f['id']} "
                  f"({emp['display_name']}) từ {old or '(trống)'} sang {new}.", form=out)
@@ -478,7 +499,8 @@ def _weight_note(form_out):
     return f" Tổng trọng số còn {form_out['total_weight']}%, cần điều chỉnh lại cho đủ 100%."
 
 
-def update_goal(engine, goal_id, title, weight, target, actor="agent"):
+def update_goal(engine, goal_id, title, weight, target, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     with engine.begin() as c:
         g, f, emp = _goal_ctx(c, goal_id, "sửa mục tiêu được")
         changes = {}
@@ -496,18 +518,19 @@ def update_goal(engine, goal_id, title, weight, target, actor="agent"):
             return _no_change(f"Mục tiêu {g['id']} không có gì thay đổi.", goal=g, form=out)
         c.execute(update(review_goals).where(review_goals.c.id == g["id"]).values(**changes))
         detail = ", ".join(f"{k}: {g[k]} -> {v}" for k, v in changes.items())
-        _log(c, actor, "UpdateReviewGoal", g["id"], detail)
+        _log(c, actor, ticket, "UpdateReviewGoal", g["id"], detail)
         goal = dict(c.execute(select(review_goals).where(review_goals.c.id == g["id"])).mappings().first())
         out = _form_out(c, f)
     return _done(f"Đã sửa mục tiêu {g['id']} trong phiếu {f['id']} của {emp['display_name']} ({detail})."
                  + _weight_note(out), goal=goal, form=out)
 
 
-def delete_goal(engine, goal_id, actor="agent"):
+def delete_goal(engine, goal_id, ticket="", actor="agent"):
+    ticket = _ticket(ticket, actor)
     with engine.begin() as c:
         g, f, emp = _goal_ctx(c, goal_id, "xóa mục tiêu được")
         c.execute(delete(review_goals).where(review_goals.c.id == g["id"]))
-        _log(c, actor, "DeleteReviewGoal", g["id"], f"Xóa '{g['title']}' ({g['weight']}%) khỏi phiếu {f['id']}")
+        _log(c, actor, ticket, "DeleteReviewGoal", g["id"], f"Xóa '{g['title']}' ({g['weight']}%) khỏi phiếu {f['id']}")
         out = _form_out(c, f)
     return _done(f"Đã xóa mục tiêu '{g['title']}' ({g['weight']}%) khỏi phiếu {f['id']} của {emp['display_name']}."
                  + _weight_note(out), goal=g, form=out)

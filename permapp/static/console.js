@@ -354,6 +354,7 @@
         h("p", { class: "log__meta" }, [
           h("time", { datetime: e.at, text: isNaN(at.getTime()) ? e.at : clock(at) }),
           h("span", { class: "actor actor--" + (e.actor === "console" ? "console" : "agent"), text: L.actorLabel(e.actor) }),
+          e.ticket ? h("span", { class: "log__ticket", text: "Ticket " + e.ticket }) : null,
         ]),
       ].concat(logLine(e)));
     })));
