@@ -85,6 +85,22 @@ role_rules = Table(
     UniqueConstraint("miniapp_id", "role", "department", "title_keyword", name="uq_role_rules"),
 )
 
+# Change log of the two permission tiers: one row per real change, made by the console or the agent.
+# Levels: none | see | use | <member role> (e.g. learner, instructor).
+permission_log = Table(
+    "permission_log",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("at", String(32), nullable=False),  # UTC ISO timestamp
+    Column("actor", String(16), nullable=False),  # console | agent
+    Column("action", String(16), nullable=False),  # Grant | ChangeRole | RevokeUse | RevokeAll
+    Column("username", String(64), nullable=False),
+    Column("miniapp_id", String(64), nullable=False),
+    Column("from_level", String(32), nullable=False),
+    Column("to_level", String(32), nullable=False),
+    Column("detail", String(512), nullable=False),
+)
+
 # ---------- Đánh giá (performance reviews) ----------
 # A mock of the appraisal system behind the "Đánh giá" tickets: periods (kỳ đánh giá), each employee's
 # form (phiếu) with goals/criteria (mục tiêu / tiêu chí) and evaluators (người đánh giá), uploaded
@@ -420,6 +436,7 @@ def reset_db(engine):
     for table_name, column, sql_type in LATE_COLUMNS:
         _ensure_column(engine, table_name, column, sql_type)
     with engine.begin() as c:
+        c.execute(delete(permission_log))
         c.execute(delete(miniapp_grants))
         c.execute(delete(system_grants))
         c.execute(delete(role_rules))

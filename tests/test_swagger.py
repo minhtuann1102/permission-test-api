@@ -7,7 +7,8 @@ from fastapi.routing import APIRoute
 from app import app
 from permapp.swagger import build_swagger
 
-EXCLUDED = {"/", "/status", "/reviews", "/swagger.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+EXCLUDED = {"/", "/status", "/reviews", "/swagger.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json",
+            "/admin/permission-log", "/admin/users/{username}/grants"}  # console-only
 
 
 def test_valid_swagger_20():

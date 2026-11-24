@@ -1,10 +1,11 @@
 """Two-tier permission rules (system access -> miniapp membership) and eligibility. No HTTP here."""
 import unicodedata
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from permapp.db import miniapp_grants, miniapps, role_rules, system_grants, users
+from permapp.db import miniapp_grants, miniapps, permission_log, role_rules, system_grants, users
 
 
 class ServiceError(Exception):
@@ -213,11 +214,68 @@ def check_eligibility(engine, username, miniapp_id, role="", approver_email=""):
     return out
 
 
+# ---------- change log ----------
+
+LEVEL_LABEL = {"none": "Chưa có quyền", "see": "Xem", "use": "Sử dụng",
+               "learner": "Học viên", "instructor": "Giảng viên"}
+ACTORS = ("console", "agent")
+
+
+def level_of(conn, username, app):
+    """none | see | use | <member role>: what `username` currently has in `app`."""
+    role = _member_role(conn, username, app["id"])
+    if role is not None:
+        return role or "use"
+    if app["always_visible"] or _has(conn, system_grants, username, app["id"]):
+        return "see"
+    return "none"
+
+
+def _label(level):
+    return LEVEL_LABEL.get(level, level)
+
+
+def _detail(action, username, app, before, after):
+    name = app["name"]
+    if action == "ChangeRole":
+        return f"Đổi vai trò {name} của {username}: {_label(before)} → {_label(after)}"
+    if action == "RevokeUse":
+        return f"Thu hồi quyền dùng {name} của {username}"
+    if action == "RevokeAll":
+        return f"Thu hồi hết quyền {name} của {username}"
+    kind = "vai trò" if after in app["roles"] else "quyền"
+    return f"Cấp {kind} {_label(after)} {name} cho {username}"
+
+
+def _record(conn, username, app, before, actor, action=None):
+    """Write one log row if the level changed. Grants pass no action: Grant or ChangeRole is inferred."""
+    after = level_of(conn, username, app)
+    if after == before:
+        return after
+    if action is None:
+        action = "ChangeRole" if before in app["roles"] and after in app["roles"] else "Grant"
+    conn.execute(permission_log.insert().values(
+        at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        actor=actor if actor in ACTORS else "agent", action=action, username=username,
+        miniapp_id=app["id"], from_level=before, to_level=after,
+        detail=_detail(action, username, app, before, after),
+    ))
+    return after
+
+
+def list_permission_log(engine, username=""):
+    q = select(permission_log).order_by(permission_log.c.id.desc()).limit(200)
+    if (username or "").strip():
+        q = q.where(permission_log.c.username == username.strip())
+    with engine.connect() as c:
+        return {"entries": [dict(r) for r in c.execute(q).mappings().all()]}
+
+
 # ---------- grants ----------
 # IntegrityError is caught outside the transaction block so a Postgres aborted
 # transaction is fully rolled back first.
 
-def grant_system_access(engine, username, miniapp_id):
+def grant_system_access(engine, username, miniapp_id, actor="agent"):
     try:
         with engine.begin() as c:
             app = _miniapp_row(c, miniapp_id)
@@ -226,14 +284,16 @@ def grant_system_access(engine, username, miniapp_id):
             if app["always_visible"] or _has(c, system_grants, username, miniapp_id):
                 already = True  # always-visible miniapps need no system access row
             else:
+                before = level_of(c, username, app)
                 c.execute(system_grants.insert().values(username=username, miniapp_id=miniapp_id))
+                _record(c, username, app, before, actor)
                 already = False
     except IntegrityError:
         already = True  # concurrent identical grant won the race
     return {"username": username, "miniapp_id": miniapp_id, "role": "", "already_granted": already}
 
 
-def grant_membership(engine, miniapp_id, username, role=""):
+def grant_membership(engine, miniapp_id, username, role="", actor="agent"):
     """Add a member, or change the member's role. already_granted=true only if nothing changed."""
     try:
         with engine.begin() as c:
@@ -248,6 +308,7 @@ def grant_membership(engine, miniapp_id, username, role=""):
                     f"'{username}' chưa được cấp quyền hệ thống cho miniapp '{miniapp_id}'. "
                     "Hãy cấp quyền hệ thống (system access) trước.",
                 )
+            before = level_of(c, username, app)
             current = _member_role(c, username, miniapp_id)
             if current is None:
                 c.execute(miniapp_grants.insert().values(username=username, miniapp_id=miniapp_id, role=role))
@@ -259,29 +320,34 @@ def grant_membership(engine, miniapp_id, username, role=""):
                 already = False
             else:
                 already = True
+            _record(c, username, app, before, actor)
     except IntegrityError:
         already = True  # concurrent identical grant won the race
     return {"username": username, "miniapp_id": miniapp_id, "role": role, "already_granted": already}
 
 
-def revoke_system_access(engine, username, miniapp_id):
+def revoke_system_access(engine, username, miniapp_id, actor="agent"):
     with engine.begin() as c:
-        _miniapp_row(c, miniapp_id)
+        app = _miniapp_row(c, miniapp_id)
         _user_row(c, username)
+        before = level_of(c, username, app)
         mem = c.execute(delete(miniapp_grants).where(
             and_(miniapp_grants.c.username == username, miniapp_grants.c.miniapp_id == miniapp_id)))
         res = c.execute(delete(system_grants).where(
             and_(system_grants.c.username == username, system_grants.c.miniapp_id == miniapp_id)))
+        _record(c, username, app, before, actor, "RevokeAll")
     # Always-visible miniapps have no system access row: revoking all removes the membership.
     return {"username": username, "miniapp_id": miniapp_id, "revoked": res.rowcount > 0 or mem.rowcount > 0}
 
 
-def revoke_membership(engine, miniapp_id, username):
+def revoke_membership(engine, miniapp_id, username, actor="agent"):
     with engine.begin() as c:
-        _miniapp_row(c, miniapp_id)
+        app = _miniapp_row(c, miniapp_id)
         _user_row(c, username)
+        before = level_of(c, username, app)
         res = c.execute(delete(miniapp_grants).where(
             and_(miniapp_grants.c.username == username, miniapp_grants.c.miniapp_id == miniapp_id)))
+        _record(c, username, app, before, actor, "RevokeUse")
     return {"username": username, "miniapp_id": miniapp_id, "revoked": res.rowcount > 0}
 
 

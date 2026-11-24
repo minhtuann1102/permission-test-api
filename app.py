@@ -81,6 +81,11 @@ def current_user(
     return user
 
 
+def actor(x_client: Optional[str] = Header(None, alias="X-Client")):
+    """Who makes a change, for the change logs: the operator console sends X-Client: console."""
+    return "console" if (x_client or "").strip().lower() == "console" else "agent"
+
+
 def require_admin(user=Depends(current_user)):
     if user["role"] != "admin":
         raise ServiceError(403, "ADMIN_REQUIRED", "Chỉ admin mới được gọi endpoint này (dùng admin API key)")
@@ -321,23 +326,27 @@ def admin_miniapps(_=Depends(require_admin), engine=Depends(db_engine)):
 
 
 @app.post("/admin/system-access")
-def grant_system_access(body: SystemAccessIn, _=Depends(require_admin), engine=Depends(db_engine)):
-    return service.grant_system_access(engine, body.username, body.miniapp_id)
+def grant_system_access(body: SystemAccessIn, _=Depends(require_admin), engine=Depends(db_engine),
+                        who=Depends(actor)):
+    return service.grant_system_access(engine, body.username, body.miniapp_id, who)
 
 
 @app.delete("/admin/system-access/{username}/{miniapp_id}")
-def revoke_system_access(username: str, miniapp_id: str, _=Depends(require_admin), engine=Depends(db_engine)):
-    return service.revoke_system_access(engine, username, miniapp_id)
+def revoke_system_access(username: str, miniapp_id: str, _=Depends(require_admin), engine=Depends(db_engine),
+                         who=Depends(actor)):
+    return service.revoke_system_access(engine, username, miniapp_id, who)
 
 
 @app.post("/admin/miniapps/{miniapp_id}/members")
-def add_member(miniapp_id: str, body: MemberIn, _=Depends(require_admin), engine=Depends(db_engine)):
-    return service.grant_membership(engine, miniapp_id, body.username, body.role)
+def add_member(miniapp_id: str, body: MemberIn, _=Depends(require_admin), engine=Depends(db_engine),
+               who=Depends(actor)):
+    return service.grant_membership(engine, miniapp_id, body.username, body.role, who)
 
 
 @app.delete("/admin/miniapps/{miniapp_id}/members/{username}")
-def remove_member(miniapp_id: str, username: str, _=Depends(require_admin), engine=Depends(db_engine)):
-    return service.revoke_membership(engine, miniapp_id, username)
+def remove_member(miniapp_id: str, username: str, _=Depends(require_admin), engine=Depends(db_engine),
+                  who=Depends(actor)):
+    return service.revoke_membership(engine, miniapp_id, username, who)
 
 
 @app.get("/admin/check")
@@ -365,6 +374,12 @@ def admin_eligibility(
 ):
     """Always 200: a 'not eligible' answer is data for the agent, not a tool failure."""
     return service.check_eligibility(engine, username, miniapp_id, role, approver_email)
+
+
+@app.get("/admin/permission-log")
+def permission_log(username: Optional[str] = Query(None), _=Depends(require_admin), engine=Depends(db_engine)):
+    """Console only (not in swagger): latest permission changes, newest first."""
+    return service.list_permission_log(engine, username)
 
 
 @app.post("/admin/reset")
