@@ -176,6 +176,47 @@ review_log = Table(
 
 REVIEW_TABLES = [review_log, review_results, review_goals, review_evaluators, review_forms, review_periods]
 
+# ---------- Sơ đồ tổ chức (org chart) for the approval check ----------
+# Everyone who may request or approve, including managers who have no account here. Levels T1..T9:
+# T1 Tổng giám đốc, T2 Senior Director, T3 Director, T4 Trưởng phòng, T5 Trưởng nhóm, T6 Senior, T7-T9 staff.
+org_people = Table(
+    "org_people",
+    metadata,
+    Column("email", String(254), primary_key=True),  # lower case
+    Column("name", String(128), nullable=False),
+    Column("level", String(4), nullable=False),  # T1..T9
+    Column("title", String(128), nullable=False),
+    Column("department", String(128), nullable=False),
+    Column("manager_email", String(254), nullable=False),  # "" = top of the chart
+    Column("status", String(16), nullable=False),  # ACTIVE | RESIGNED
+)
+
+
+def _person(email, name, level, title, department, manager_email, status="ACTIVE"):
+    return {"email": email, "name": name, "level": level, "title": title, "department": department,
+            "manager_email": manager_email, "status": status}
+
+
+SEED_ORG_PEOPLE = [
+    _person("sd.vanhanh@demo.local", "Trần Văn Hùng", "T2", "Senior Director Khối Vận hành", "Khối Vận hành", ""),
+    _person("director.nhansu@demo.local", "Lê Thị Mai", "T3", "Director Nhân sự & Đào tạo",
+            "Khối Nhân sự & Đào tạo", "sd.vanhanh@demo.local"),
+    _person("director.kinhdoanh@demo.local", "Phạm Quốc Bảo", "T3", "Director Kinh doanh", "Khối Kinh doanh",
+            "sd.vanhanh@demo.local"),
+    _person("truongphong.daotao@demo.local", "Nguyễn Thu Hà", "T4", "Trưởng phòng Đào tạo", "Phòng Đào tạo (L&D)",
+            "director.nhansu@demo.local"),
+    _person("truongphong.kinhdoanh@demo.local", "Đỗ Minh Khang", "T4", "Trưởng phòng Kinh doanh", "Phòng Kinh doanh",
+            "director.kinhdoanh@demo.local"),
+    _person("truongphong.kinhdoanh.cu@demo.local", "Vũ Đức Long", "T4", "Nguyên Trưởng phòng Kinh doanh",
+            "Phòng Kinh doanh", "director.kinhdoanh@demo.local", "RESIGNED"),
+    _person("user1@demo.local", "Người dùng 1", "T7", "Chuyên viên đào tạo", "Phòng Đào tạo (L&D)",
+            "truongphong.daotao@demo.local"),
+    _person("user2@demo.local", "Người dùng 2", "T7", "Nhân viên kinh doanh", "Phòng Kinh doanh",
+            "truongphong.kinhdoanh@demo.local"),
+    _person("user3@demo.local", "Người dùng 3", "T7", "Nhân viên kinh doanh", "Phòng Kinh doanh",
+            "truongphong.kinhdoanh@demo.local", "RESIGNED"),
+]
+
 
 def _period(pid, name, company, kind, start, deadline, status):
     return {"id": pid, "name": name, "company": company, "kind": kind, "start_date": start,
@@ -430,10 +471,12 @@ def init_db(engine):
         c.execute(update(miniapp_grants).where(miniapp_grants.c.role.is_(None)).values(role=""))
     _seed_role_rules(engine)
     _seed_reviews(engine)
+    for row in SEED_ORG_PEOPLE:
+        _insert_if_absent(engine, org_people, org_people.c.email, row)
 
 
 def reset_db(engine):
-    """Remove every grant and restore seed users, miniapps, eligibility rules and review data."""
+    """Remove every grant and restore seed users, miniapps, eligibility rules, review data and the org chart."""
     _create_schema(engine)
     for table_name, column, sql_type in LATE_COLUMNS:
         _ensure_column(engine, table_name, column, sql_type)
@@ -444,6 +487,7 @@ def reset_db(engine):
         c.execute(delete(role_rules))
         for table in REVIEW_TABLES:
             c.execute(delete(table))
+        c.execute(delete(org_people))
         for row in _seed_users():
             c.execute(update(users).where(users.c.username == row["username"]).values(**row))
         for row in SEED_MINIAPPS:

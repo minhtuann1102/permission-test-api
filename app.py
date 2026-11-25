@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from permapp import reviews, service
+from permapp import approvals, reviews, service
 from permapp.db import get_engine, init_db, reset_db
 from permapp.service import ServiceError
 from permapp.swagger import build_swagger
@@ -155,6 +155,12 @@ class ResultRowIn(BaseModel):
 class ResultsIn(BaseModel):
     rows: List[ResultRowIn]
     ticket: Optional[str] = ""  # SDP ticket: required for the agent, the operator screen sends none
+
+
+class ApprovalMailIn(BaseModel):
+    file_name: str
+    content_base64: str
+    requester_email: Optional[str] = ""
 
 
 # ---------- public ----------
@@ -488,6 +494,20 @@ def review_delete_goal(goal_id: str, ticket: Optional[str] = Query(None), _=Depe
 def review_log(ticket: Optional[str] = Query(None), target: Optional[str] = Query(None),
                _=Depends(require_admin), engine=Depends(db_engine)):
     return reviews.list_log(engine, ticket, target)
+
+
+# ---------- admin: thẩm định phê duyệt (approval check) ----------
+
+@app.get("/admin/org/check")
+def org_check(requester_email: Optional[str] = Query(None), approver_email: Optional[str] = Query(None),
+              request_type: Optional[str] = Query(None), _=Depends(require_admin), engine=Depends(db_engine)):
+    """Always 200: 'not approved' is data for the agent, not a tool failure."""
+    return approvals.check_org(engine, requester_email, approver_email, request_type)
+
+
+@app.post("/admin/approvals/parse")
+def approval_parse(body: ApprovalMailIn, _=Depends(require_admin)):
+    return approvals.parse_approval_mail(body.file_name, body.content_base64, body.requester_email)
 
 
 # check_dir=False: if the folder were missing from a deploy, only the UI breaks, never the API.
