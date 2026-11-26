@@ -212,6 +212,9 @@ SEED_ORG_PEOPLE_UAT = [
             "hrms_test1" + _VG),
     _person("vm.test46" + _VG, "Dieu_duong_08", "T5", "Trưởng nhóm VinSpeed", "VinSpeed", "vm.test66" + _VG),
     _person("v.hanhntm27" + _VG, "Nguyễn Văn Test 7", "T7", "Chuyên viên hành chính", "VinCons", "vm.test66" + _VG),
+    # Same person under the company mail shown on QTNS UAT; SDP tickets may use either address.
+    _person("v.hanhntm27@greensm.com", "Nguyễn Văn Test 7", "T7", "Chuyên viên hành chính", "VinCons",
+            "vm.test66" + _VG),
     _person("3662992" + _VG, "Mã Test VinFuture", "T7", "Chuyên viên sửa máy", "Future", "vm.test66" + _VG),
     _person("vm.test71" + _VG, "Test71", "T7", "Công nhân", "Future", "vm.test46" + _VG),
     _person("vm.test54" + _VG, "Dieu_duong_16", "T7", "Chuyên viên", "VinSmart Future", "vm.test11" + _VG),

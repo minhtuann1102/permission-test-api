@@ -101,7 +101,7 @@ def test_uat_chart_is_consistent():
     emails = {p["email"] for p in SEED_ORG_PEOPLE}
     assert len(emails) == len(SEED_ORG_PEOPLE)
     for p in SEED_ORG_PEOPLE_UAT:
-        assert p["email"] == p["email"].lower() and p["email"].endswith("@vingroup.net")
+        assert p["email"] == p["email"].lower() and p["email"].endswith(("@vingroup.net", "@greensm.com"))
         assert p["manager_email"] == "" or p["manager_email"] in emails
 
 
@@ -129,6 +129,12 @@ def test_uat_chart(engine, requester, approver, rtype, approved, relation, reaso
     assert r["relation"] == relation
     assert any(reason_part in x for x in r["reasons"]), r["reasons"]
     assert r["suggested_approver"]["email"] == suggested + VG
+
+
+def test_uat_company_mail_alias(engine):
+    r = approvals.check_org(engine, "V.HANHNTM27@GREENSM.COM", "3795400" + VG, "KHAC")
+    assert r["approved_by_org"] is True and r["relation"] == "upper_manager"
+    assert r["requester"]["name"] == "Nguyễn Văn Test 7"
 
 
 def test_reset_restores_org(engine):
