@@ -41,6 +41,8 @@ Trang chỉ đọc là `/reviews`. Dữ liệu mẫu, luật và kịch bản te
   - user1 / user2 / user3: các miniapp đang nhìn thấy, nút *Mở miniapp* khi đã là thành viên.
 - `/status`: bảng tổng quan trạng thái quyền (người dùng × miniapp), chỉ đọc, không cần key.
 - `/reviews`: kỳ, phiếu, mục tiêu, người đánh giá và nhật ký của hệ thống đánh giá giả lập. Chỉ đọc, không cần key.
+- `/org`: sơ đồ tổ chức giả lập dạng cây (bậc, chức danh, đơn vị, người đã nghỉ việc) dùng cho thẩm định phê duyệt.
+  Chỉ đọc, không cần key. Bản JSON: `GET /admin/org/people` (admin key).
 
 ## API key (header `X-API-Key`)
 

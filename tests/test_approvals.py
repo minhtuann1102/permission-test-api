@@ -225,3 +225,40 @@ def test_parse_endpoint(client):
     r = client.post("/admin/approvals/parse", headers=ADMIN, json={"file_name": "a.eml", "content_base64": ""})
     assert r.status_code == 422 and r.json()["code"] == "VALIDATION_ERROR"
     assert client.post("/admin/approvals/parse", headers=U1, json=payload).status_code == 403
+
+
+def test_list_org_sorted_with_reports(engine):
+    data = approvals.list_org(engine)
+    from permapp.db import SEED_ORG_PEOPLE
+    assert data["count"] == len(SEED_ORG_PEOPLE) == len(data["people"])
+    ranks = [approvals._rank(p["level"]) for p in data["people"]]
+    assert ranks == sorted(ranks)
+    by_email = {p["email"]: p for p in data["people"]}
+    assert by_email["vm.test66@vingroup.net"]["direct_reports"] == 3
+    assert by_email["vm.test26@vingroup.net"]["status"] == "RESIGNED"
+    assert all(p["manager_found"] for p in data["people"])
+
+
+def test_org_tree_covers_everyone_even_with_loops():
+    def p(email, manager, found=True):
+        return {"email": email, "manager_email": manager, "manager_found": found}
+    people = [p("top", ""), p("a", "top"), p("b", "a"), p("x", "y"), p("y", "x"), p("lost", "nobody", False)]
+    seen = []
+
+    def walk(node):
+        seen.append(node[0]["email"])
+        for c in node[1]:
+            walk(c)
+    for root in approvals.org_tree(people):
+        walk(root)
+    assert sorted(seen) == sorted(x["email"] for x in people)
+
+
+def test_org_people_endpoint_and_page(client):
+    r = client.get("/admin/org/people", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["count"] == len(r.json()["people"]) > 0
+    assert client.get("/admin/org/people", headers=U1).status_code == 403
+    page = client.get("/org")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "Hoàng Thế Trường" in page.text and "Đã nghỉ việc" in page.text and "director.nhansu@demo.local" in page.text
+    assert 'href="/org"' in client.get("/status").text

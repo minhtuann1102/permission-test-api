@@ -231,7 +231,8 @@ code{{background:#eef;padding:0 .3em}}
 <p>Trạng thái quyền hiện tại. <b>chỉ thấy</b> = đã có quyền hệ thống (tầng 1);
 <b>dùng được</b> = đã là thành viên miniapp (tầng 2). LMS luôn hiển thị với mọi người,
 thành viên có vai trò Học viên hoặc Giảng viên. Spec: <a href="/swagger.json"><code>/swagger.json</code></a> ·
-Hệ thống đánh giá giả lập: <a href="/reviews"><code>/reviews</code></a></p>
+Hệ thống đánh giá giả lập: <a href="/reviews"><code>/reviews</code></a> ·
+Sơ đồ tổ chức: <a href="/org"><code>/org</code></a></p>
 <table><tr><th>Người dùng</th>{head}</tr>{''.join(rows)}</table>
 </body></html>"""
     return HTMLResponse(body)
@@ -299,6 +300,45 @@ Thao tác bằng tay ở <a href="/?as=admin&amp;section=reviews">màn hình Đ�
 <table><tr><th>Phiếu</th><th>Nhân viên</th><th>Kỳ</th><th>Trạng thái</th><th>Hạn</th><th>Người đánh giá</th><th>Mục tiêu / tiêu chí</th></tr>{''.join(f_rows)}</table>
 <h2>Nhật ký thao tác (30 dòng gần nhất)</h2>
 <table><tr><th>Lúc (UTC)</th><th>Người làm</th><th>Ticket</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr>{l_rows}</table>
+</body></html>"""
+    return HTMLResponse(body)
+
+
+def _org_node(node):
+    p, children = node
+    gone = ' <span class="gone">Đã nghỉ việc</span>' if p["status"] == "RESIGNED" else ""
+    lost = ("" if p["manager_found"]
+            else f' <span class="warn">quản lý {_cell(p["manager_email"])} không có trong sơ đồ</span>')
+    sub = "".join(_org_node(c) for c in children)
+    return (f"<li><span class='lv lv-{p['level'].lower()}'>{_cell(p['level'])}</span> <b>{_cell(p['name'])}</b>{gone}"
+            f" <code>{_cell(p['email'])}</code><br><small>{_cell(p['title'])} · {_cell(p['department'])}</small>{lost}"
+            + (f"<ul>{sub}</ul>" if sub else "") + "</li>")
+
+
+@app.get("/org", response_class=HTMLResponse, include_in_schema=False)
+def org_page(engine=Depends(db_engine)):
+    data = approvals.list_org(engine)
+    trees = "".join(_org_node(n) for n in approvals.org_tree(data["people"]))
+    rules = " · ".join(f"<b>{k}</b>: từ {v} ({approvals.LEVEL_NAMES[v]}) trở lên" for k, v in approvals.MIN_LEVEL.items())
+    body = f"""<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sơ đồ tổ chức (giả lập)</title>
+<style>
+body{{font-family:system-ui,sans-serif;margin:2rem;color:#1d2433;background:#fafafa}}
+ul{{list-style:none;margin:0;padding-left:1.4rem;border-left:1px solid #d5d9e0}}
+body>ul{{border-left:0;padding-left:0}}
+li{{margin:.45rem 0}} small{{color:#6b7280}} code{{background:#eef;padding:0 .3em;font-size:.85em}}
+.lv{{display:inline-block;min-width:1.9rem;text-align:center;font-size:.75rem;font-weight:600;border-radius:4px;
+padding:0 .3em;background:#e5e7eb}}
+.lv-t1,.lv-t2{{background:#e0e7ff}} .lv-t3{{background:#dcfce7}} .lv-t4{{background:#fef9c3}}
+.gone{{font-size:.75rem;font-weight:600;color:#b42318;background:#fee4e2;border-radius:4px;padding:0 .35em}}
+.warn{{font-size:.8rem;color:#b54708}}
+</style></head><body>
+<h1>Sơ đồ tổ chức (giả lập)</h1>
+<p>{data['count']} người, dùng cho thẩm định phê duyệt (<code>/admin/org/check</code>). Bậc tối thiểu của người
+duyệt: {rules}. Người duyệt phải nằm trên tuyến quản lý của requester và chưa nghỉ việc. Chỉ đọc, không cần key;
+JSON ở <code>/admin/org/people</code> (admin key). <a href="/status">Quyền miniapp</a> · <a href="/reviews">Đánh giá</a></p>
+<ul>{trees}</ul>
 </body></html>"""
     return HTMLResponse(body)
 
@@ -497,6 +537,11 @@ def review_log(ticket: Optional[str] = Query(None), target: Optional[str] = Quer
 
 
 # ---------- admin: thẩm định phê duyệt (approval check) ----------
+
+@app.get("/admin/org/people")
+def org_people_list(_=Depends(require_admin), engine=Depends(db_engine)):
+    return approvals.list_org(engine)
+
 
 @app.get("/admin/org/check")
 def org_check(requester_email: Optional[str] = Query(None), approver_email: Optional[str] = Query(None),

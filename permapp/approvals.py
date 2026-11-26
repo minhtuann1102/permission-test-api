@@ -72,6 +72,39 @@ def management_chain(conn, person):
     return chain
 
 
+def list_org(engine):
+    """Everyone in the org chart, most senior first, each with their direct reports' count."""
+    with engine.connect() as conn:
+        rows = [dict(r) for r in conn.execute(select(org_people)).mappings()]
+    reports = {}
+    for p in rows:
+        if p["manager_email"]:
+            reports[p["manager_email"]] = reports.get(p["manager_email"], 0) + 1
+    emails = {p["email"] for p in rows}
+    rows.sort(key=lambda p: (_rank(p["level"]), p["email"]))
+    people = [{**_brief(p), "manager_email": p["manager_email"],
+               "manager_found": not p["manager_email"] or p["manager_email"] in emails,
+               "direct_reports": reports.get(p["email"], 0)} for p in rows]
+    return {"count": len(people), "people": people}
+
+
+def org_tree(people):
+    """Group list_org people into trees: [(person, children), ...]. A person whose manager is unknown is a root.
+    People caught in a manager loop have no root; they are returned as extra roots so nobody is hidden."""
+    by_manager = {}
+    for p in people:
+        by_manager.setdefault(p["manager_email"] if p["manager_found"] else "", []).append(p)
+    placed = set()
+
+    def build(person):
+        placed.add(person["email"])
+        return person, [build(c) for c in by_manager.get(person["email"], []) if c["email"] not in placed]
+
+    roots = [build(p) for p in by_manager.get("", [])]
+    roots += [build(p) for p in people if p["email"] not in placed]
+    return roots
+
+
 def check_org(engine, requester_email, approver_email, request_type):
     """Always returns data (never raises for unknown people): a 'no' is an answer for the agent, not a failure."""
     rtype = normalize_request_type(request_type)

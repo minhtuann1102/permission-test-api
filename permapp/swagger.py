@@ -387,6 +387,29 @@ DEFINITIONS.update({
         "properties": {"email": _str("Email."), "name": _str("Name."), "level": _str("Level T1..T9."),
                        "status": _str("ACTIVE or RESIGNED.")},
     },
+    "OrgChartPerson": {
+        "type": "object",
+        "properties": {
+            "found": _bool("Always true here."),
+            "email": _str("Email, lower case."),
+            "name": _str("Full name."),
+            "level": _str("Leader level T1..T9. Smaller number = more senior."),
+            "level_name": _str("Vietnamese name of the level, e.g. 'Director'."),
+            "title": _str("Job title."),
+            "department": _str("Department or division."),
+            "status": _str("ACTIVE or RESIGNED."),
+            "manager_email": _str("Email of the direct manager. Empty at the top of the chart."),
+            "manager_found": _bool("False if manager_email is set but that person is not in the chart."),
+            "direct_reports": _int("How many people have this person as direct manager."),
+        },
+    },
+    "OrgChart": {
+        "type": "object",
+        "properties": {
+            "count": _int("Number of people."),
+            "people": _arr(_ref("OrgChartPerson"), "Everyone in the org chart, most senior level first."),
+        },
+    },
     "OrgCheck": {
         "type": "object",
         "properties": {
@@ -724,6 +747,15 @@ def _review_paths():
 
 def _approval_paths():
     return {
+        "/admin/org/people": {
+            "get": _op(
+                "ListOrgPeople", "List the org chart",
+                "Admin only (admin key). Everyone in the mock org chart used by CheckApprover: level, title, "
+                "department, direct manager, status and number of direct reports, most senior first. For looking "
+                "the chart over; to decide whether someone may approve a ticket, call CheckApprover instead.",
+                [ADMIN_KEY_PARAM], "OrgChart", "The org chart.", ADMIN_ERRORS,
+            )
+        },
         "/admin/org/check": {
             "get": _op(
                 "CheckApprover", "Check an approver against the org chart",
