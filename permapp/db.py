@@ -197,6 +197,27 @@ def _person(email, name, level, title, department, manager_email, status="ACTIVE
             "manager_email": manager_email, "status": status}
 
 
+# Test accounts on QTNS UAT (api-myvingroup-staging), so QTNS tickets can be checked end to end. Email = UAT account
+# + @vingroup.net. Names and companies (P&L) come from UAT; levels, managers and statuses are mock, chosen so the
+# chart covers every outcome: T3 upper manager ok, T4 too low for QTNS, T3 on another chain, resigned manager.
+_VG = "@vingroup.net"
+SEED_ORG_PEOPLE_UAT = [
+    _person("vm.test73" + _VG, "Lanh_dao_co_so_05", "T2", "Senior Director Khối Nhân sự", "Future", ""),
+    _person("3795400" + _VG, "Nguyễn Tâm", "T3", "Director Nhân sự", "VinSpace", "vm.test73" + _VG),
+    _person("hrms_test1" + _VG, "Nguyễn Văn VinMec", "T3", "Director Vận hành", "Future", "vm.test73" + _VG),
+    _person("vm.test26" + _VG, "Bac_si_03", "T3", "Nguyên Director Y tế", "Vin Nexus Center", "vm.test73" + _VG,
+            "RESIGNED"),
+    _person("vm.test66" + _VG, "Hoàng Thế Trường", "T4", "Trưởng phòng Nhân sự", "Vincons", "3795400" + _VG),
+    _person("vm.test11" + _VG, "Nguyễn Bác Sỹ 04", "T4", "Trưởng phòng Quản lý", "Vin Future Material",
+            "hrms_test1" + _VG),
+    _person("vm.test46" + _VG, "Dieu_duong_08", "T5", "Trưởng nhóm VinSpeed", "VinSpeed", "vm.test66" + _VG),
+    _person("v.hanhntm27" + _VG, "Nguyễn Văn Test 7", "T7", "Chuyên viên hành chính", "VinCons", "vm.test66" + _VG),
+    _person("3662992" + _VG, "Mã Test VinFuture", "T7", "Chuyên viên sửa máy", "Future", "vm.test66" + _VG),
+    _person("vm.test71" + _VG, "Test71", "T7", "Công nhân", "Future", "vm.test46" + _VG),
+    _person("vm.test54" + _VG, "Dieu_duong_16", "T7", "Chuyên viên", "VinSmart Future", "vm.test11" + _VG),
+    _person("vm.test29" + _VG, "Bac_si_06", "T7", "Chuyên viên", "VinSpace", "vm.test26" + _VG),
+]
+
 SEED_ORG_PEOPLE = [
     _person("sd.vanhanh@demo.local", "Trần Văn Hùng", "T2", "Senior Director Khối Vận hành", "Khối Vận hành", ""),
     _person("director.nhansu@demo.local", "Lê Thị Mai", "T3", "Director Nhân sự & Đào tạo",
@@ -215,6 +236,7 @@ SEED_ORG_PEOPLE = [
             "truongphong.kinhdoanh@demo.local"),
     _person("user3@demo.local", "Người dùng 3", "T7", "Nhân viên kinh doanh", "Phòng Kinh doanh",
             "truongphong.kinhdoanh@demo.local", "RESIGNED"),
+    *SEED_ORG_PEOPLE_UAT,
 ]
 
 

@@ -96,6 +96,41 @@ def test_request_type_defaults_to_strict(raw, expected):
     assert approvals.normalize_request_type(raw) == expected
 
 
+def test_uat_chart_is_consistent():
+    from permapp.db import SEED_ORG_PEOPLE, SEED_ORG_PEOPLE_UAT
+    emails = {p["email"] for p in SEED_ORG_PEOPLE}
+    assert len(emails) == len(SEED_ORG_PEOPLE)
+    for p in SEED_ORG_PEOPLE_UAT:
+        assert p["email"] == p["email"].lower() and p["email"].endswith("@vingroup.net")
+        assert p["manager_email"] == "" or p["manager_email"] in emails
+
+
+VG = "@vingroup.net"
+
+
+@pytest.mark.parametrize("requester, approver, rtype, approved, relation, reason_part, suggested", [
+    # QTNS (KHAC, T3+): Director above the direct manager approves
+    ("v.hanhntm27", "3795400", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "3795400"),
+    # direct manager is only T4
+    ("v.hanhntm27", "vm.test66", "KHAC", False, "direct_manager", "cần T3", "3795400"),
+    # a T3 on another chain
+    ("3662992", "hrms_test1", "KHAC", False, "not_on_chain", "không nằm trên tuyến", "3795400"),
+    # chain of 4 managers: T5 -> T4 -> T3 -> T2, the T2 at the top approves
+    ("vm.test71", "vm.test73", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "3795400"),
+    # T5 team lead is too low even for a miniapp
+    ("vm.test71", "vm.test46", "MINIAPP", False, "direct_manager", "cần T4", "vm.test66"),
+    # the direct manager has resigned: suggest the next active one up
+    ("vm.test29", "vm.test26", "KHAC", False, "direct_manager", "đã nghỉ việc", "vm.test73"),
+    ("vm.test54", "hrms_test1", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "hrms_test1"),
+])
+def test_uat_chart(engine, requester, approver, rtype, approved, relation, reason_part, suggested):
+    r = approvals.check_org(engine, requester + VG, approver.upper() + VG, rtype)
+    assert r["approved_by_org"] is approved
+    assert r["relation"] == relation
+    assert any(reason_part in x for x in r["reasons"]), r["reasons"]
+    assert r["suggested_approver"]["email"] == suggested + VG
+
+
 def test_reset_restores_org(engine):
     with engine.begin() as c:
         c.execute(update(org_people).where(org_people.c.email == "user1@demo.local").values(level="T1"))
