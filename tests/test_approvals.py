@@ -110,9 +110,9 @@ VG = "@vingroup.net"
 
 @pytest.mark.parametrize("requester, approver, rtype, approved, relation, reason_part, suggested", [
     # QTNS (KHAC, T3+): Director above the direct manager approves
-    ("v.hanhntm27", "3795400", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "3795400"),
+    ("v.hanhntm27@greensm.com", "3795400", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "3795400"),
     # direct manager is only T4
-    ("v.hanhntm27", "vm.test66", "KHAC", False, "direct_manager", "cần T3", "3795400"),
+    ("v.hanhntm27@greensm.com", "vm.test66", "KHAC", False, "direct_manager", "cần T3", "3795400"),
     # a T3 on another chain
     ("3662992", "hrms_test1", "KHAC", False, "not_on_chain", "không nằm trên tuyến", "3795400"),
     # chain of 4 managers: T5 -> T4 -> T3 -> T2, the T2 at the top approves
@@ -124,17 +124,29 @@ VG = "@vingroup.net"
     ("vm.test54", "hrms_test1", "KHAC", True, "upper_manager", "đạt bậc tối thiểu T3", "hrms_test1"),
 ])
 def test_uat_chart(engine, requester, approver, rtype, approved, relation, reason_part, suggested):
-    r = approvals.check_org(engine, requester + VG, approver.upper() + VG, rtype)
+    r = approvals.check_org(engine, requester if "@" in requester else requester + VG, approver.upper() + VG, rtype)
     assert r["approved_by_org"] is approved
     assert r["relation"] == relation
     assert any(reason_part in x for x in r["reasons"]), r["reasons"]
     assert r["suggested_approver"]["email"] == suggested + VG
 
 
-def test_uat_company_mail_alias(engine):
+def test_uat_company_mail(engine):
     r = approvals.check_org(engine, "V.HANHNTM27@GREENSM.COM", "3795400" + VG, "KHAC")
     assert r["approved_by_org"] is True and r["relation"] == "upper_manager"
     assert r["requester"]["name"] == "Nguyễn Văn Test 7"
+
+
+def test_init_removes_retired_org_mail(engine):
+    from permapp.db import RETIRED_ORG_EMAILS, init_db
+    old = "v.hanhntm27" + VG
+    assert old in RETIRED_ORG_EMAILS
+    with engine.begin() as c:  # a database seeded before the mail changed
+        c.execute(org_people.insert().values(email=old, name="Nguyễn Văn Test 7", level="T7", title="", department="",
+                                             manager_email="vm.test66" + VG, status="ACTIVE"))
+    init_db(engine)
+    emails = {p["email"] for p in approvals.list_org(engine)["people"]}
+    assert old not in emails and "v.hanhntm27@greensm.com" in emails
 
 
 def test_reset_restores_org(engine):

@@ -211,8 +211,7 @@ SEED_ORG_PEOPLE_UAT = [
     _person("vm.test11" + _VG, "Nguyễn Bác Sỹ 04", "T4", "Trưởng phòng Quản lý", "Vin Future Material",
             "hrms_test1" + _VG),
     _person("vm.test46" + _VG, "Dieu_duong_08", "T5", "Trưởng nhóm VinSpeed", "VinSpeed", "vm.test66" + _VG),
-    _person("v.hanhntm27" + _VG, "Nguyễn Văn Test 7", "T7", "Chuyên viên hành chính", "VinCons", "vm.test66" + _VG),
-    # Same person under the company mail shown on QTNS UAT; SDP tickets may use either address.
+    # Company mail shown on QTNS UAT (SDP ticket #227); it replaces v.hanhntm27@vingroup.net.
     _person("v.hanhntm27@greensm.com", "Nguyễn Văn Test 7", "T7", "Chuyên viên hành chính", "VinCons",
             "vm.test66" + _VG),
     _person("3662992" + _VG, "Mã Test VinFuture", "T7", "Chuyên viên sửa máy", "Future", "vm.test66" + _VG),
@@ -220,6 +219,9 @@ SEED_ORG_PEOPLE_UAT = [
     _person("vm.test54" + _VG, "Dieu_duong_16", "T7", "Chuyên viên", "VinSmart Future", "vm.test11" + _VG),
     _person("vm.test29" + _VG, "Bac_si_06", "T7", "Chuyên viên", "VinSpace", "vm.test26" + _VG),
 ]
+
+# Seeded by an earlier deploy and no longer in the chart; init_db removes them so a deploy needs no reset.
+RETIRED_ORG_EMAILS = ["v.hanhntm27@vingroup.net"]
 
 SEED_ORG_PEOPLE = [
     _person("sd.vanhanh@demo.local", "Trần Văn Hùng", "T2", "Senior Director Khối Vận hành", "Khối Vận hành", ""),
@@ -496,6 +498,8 @@ def init_db(engine):
         c.execute(update(miniapp_grants).where(miniapp_grants.c.role.is_(None)).values(role=""))
     _seed_role_rules(engine)
     _seed_reviews(engine)
+    with engine.begin() as c:
+        c.execute(delete(org_people).where(org_people.c.email.in_(RETIRED_ORG_EMAILS)))
     for row in SEED_ORG_PEOPLE:
         _insert_if_absent(engine, org_people, org_people.c.email, row)
 
